@@ -401,6 +401,10 @@ PAGE = """<!DOCTYPE html>
            border: 0.5px solid #333845; border-radius: 8px; padding: 9px 14px; font-size: 13px; display: none; }
   .empty { padding: 28px; text-align: center; color: #8b909c; }
   a.vlink { color: #74b3ee; cursor: pointer; text-decoration: underline; }
+  /* Visible marker so a recording is self-evidently masked — and so you can't forget
+     it's on and mistake the fake addresses for your real ones. */
+  body.demo .title::after { content: "demo mode"; font-size: 11px; font-weight: 500;
+    background: #33270f; color: #f0b86e; padding: 3px 9px; border-radius: 999px; }
   /* Network History sheet — a STATIC overlay (never inside an innerHTML-re-rendered
      list, per the destroyed-log-panel lesson). Backdrop + right-side sliding panel. */
   .sheetback { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; z-index: 40; }
@@ -427,6 +431,9 @@ PAGE = """<!DOCTYPE html>
     <div class="title"><span>⌁</span> launchd dashboard <span class="muted mono" style="font-size:12px;font-weight:400" id="domain"></span></div>
     <div style="display:flex;gap:8px;align-items:center">
       <button id="histBtn" onclick="openHistory()" style="font-size:12px">Network History</button>
+      <label class="muted" style="display:flex;align-items:center;gap:6px;font-size:12px"
+             title="Mask private data for a screen recording: IP addresses, device names and your username. Display only — nothing on disk changes. It canNOT detect arbitrary secrets in command lines or log output, so review the footage before publishing.">
+        <input type="checkbox" id="demoToggle"/> 🎥 demo</label>
       <label class="muted" style="display:flex;align-items:center;gap:6px;font-size:12px">
         <input type="checkbox" id="showVendor"/> show vendor</label>
       <button class="icon" id="refresh" title="Refresh">↻</button>
@@ -498,10 +505,81 @@ function rel(iso) {
 }
 function statusClass(s) { return s === "running" ? "run" : s === "unloaded" ? "off" : "ok"; }
 
+// ---- Demo mode ------------------------------------------------------------
+// Masks the private data on screen for a public screen recording. DISPLAY ONLY:
+// the API keeps serving the truth and nothing on disk changes — only what renders.
+// Session-only (never persisted): forgetting it was on would read as a broken
+// dashboard showing someone else's machine.
+let demoMode = false;
+
+// __SCRUB__ (extracted and EXECUTED by tests/test_page.py — keep it self-contained)
+const _fakeIP = new Map(), _fakeHost = new Map();
+function _mapped(store, real, make) {
+  if (!store.has(real)) store.set(real, make(store.size + 1));
+  return store.get(real);
+}
+// RFC 5737 TEST-NET-1 / RFC 3849 — the ranges that exist for documentation.
+const fakeIPv4 = (ip) => _mapped(_fakeIP, ip, (n) => `192.0.2.${n}`);
+const fakeIPv6 = (ip) => _mapped(_fakeIP, ip, (n) => `2001:db8::${n}`);
+const fakeHost = (h) => _mapped(_fakeHost, h, (n) => `device-${n}.local`);
+
+// NOTE: this JS lives inside a PYTHON string, so every backslash must be doubled —
+// a single `\\b` is Python's BACKSPACE character, which silently turns a word-boundary
+// regex into one that matches nothing (found by the node-executed test below).
+const _RE_IPV4 = /\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b/g;
+const _RE_IPV6_CAND = /\\b[0-9a-f]{0,4}(?::[0-9a-f]{0,4}){2,7}(?:%[\\w.]+)?\\b/gi;
+const _RE_USER = /\\/Users\\/[^/\\s"']+/g;
+const _RE_HOSTNAME = /\\b[\\w-]+\\.(?:local|lan|home)\\b/gi;
+
+/** Is this colon-run really an IPv6 address? A CLOCK TIME ("13:10:15") matches the
+ *  same shape, and every payload is full of ISO timestamps — masking those would
+ *  wreck the demo. Real addresses either contain "::" or have all 7 separators. */
+function _isIPv6(s) {
+  const bare = s.split("%")[0];
+  if (bare === "::1") return false;  // loopback is not private
+  if (!/^[0-9a-f:]+$/i.test(bare)) return false;
+  return bare.includes("::") || (bare.match(/:/g) || []).length === 7;
+}
+
+function scrubText(s) {
+  return s
+    .replace(_RE_USER, "/Users/demo")
+    .replace(_RE_HOSTNAME, (m) => fakeHost(m))
+    // Loopback stays real: it's not private, and masking it would make every
+    // "bound to 127.0.0.1" row read as if it were exposed.
+    .replace(_RE_IPV4, (m) => (m === "127.0.0.1" ? m : fakeIPv4(m)))
+    .replace(_RE_IPV6_CAND, (m) => (_isIPv6(m) ? fakeIPv6(m) : m));
+}
+
+/** Deep-walk any API payload, masking IPs, device names and the username.
+ *  Ports, agent labels, app names and project names are deliberately KEPT —
+ *  they're the portfolio the recording is showing off. */
+function scrub(x) {
+  if (typeof x === "string") return scrubText(x);
+  if (Array.isArray(x)) return x.map(scrub);
+  if (x && typeof x === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(x)) {
+      // A hostname field is a device name whether or not it looks like one.
+      out[k] = (k === "hostname" && typeof v === "string" && v) ? fakeHost(v) : scrub(v);
+    }
+    return out;
+  }
+  return x;
+}
+// __/SCRUB__
+
+/** The ONE place the page turns a response into data. Every renderer and toast is
+ *  downstream of this, so demo mode cannot be leaked past by a new call site. */
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  const j = await r.json();
+  return demoMode ? scrub(j) : j;
+}
+
 async function load() {
   const all = $("showVendor").checked;
-  const r = await fetch(`/api/agents?all=${all}`);
-  const agents = await r.json();
+  const agents = await api(`/api/agents?all=${all}`);
   const healthy = agents.filter(a => a.healthy && a.status !== "unloaded").length;
   const failed = agents.filter(a => !a.healthy).length;
   const next = agents.map(a => a.next_run).filter(Boolean).sort()[0];
@@ -536,8 +614,7 @@ async function load() {
 }
 
 async function act(label, what) {
-  const r = await fetch(`/api/agents/${encodeURIComponent(label)}/${what}`, { method: "POST" });
-  const j = await r.json();
+  const j = await api(`/api/agents/${encodeURIComponent(label)}/${what}`, { method: "POST" });
   toast(j.ok ? `${what}: ${label} ✓` : `${what} failed: ${j.detail || j.code}`);
   setTimeout(load, 600);
   if (openLog === label) setTimeout(() => showLog(label, true), 800);
@@ -555,8 +632,7 @@ const logPart = (id) => logPanel.querySelector("#" + id);
 
 async function refreshLog(fallbackTitle) {
   if (!openLog || !logURL) return;
-  const r = await fetch(logURL);
-  const j = await r.json();
+  const j = await api(logURL);
   logPart("logpath").textContent = j.path || fallbackTitle || "";
   logPart("lognote").textContent = j.note || "";
   const el = logPart("log");
@@ -613,8 +689,7 @@ function toast(msg) { const t = $("toast"); t.textContent = msg; t.style.display
 
 // ---- Apps (dev servers launched as transient launchd agents) ---------------
 async function loadApps() {
-  const r = await fetch("/api/apps");
-  const apps = await r.json();
+  const apps = await api("/api/apps");
   if (!apps.length) {
     $("applist").innerHTML = `<div class="empty">No apps configured — scan for projects to add your dev servers, or edit apps.json (see apps.json.example).</div>`;
     return;
@@ -675,8 +750,7 @@ async function removeApp(slug) {
     return;
   }
   armedRemove = null;
-  const r = await fetch(`/api/apps/${encodeURIComponent(slug)}`, { method: "DELETE" });
-  const j = await r.json();
+  const j = await api(`/api/apps/${encodeURIComponent(slug)}`, { method: "DELETE" });
   toast(j.ok ? `removed ${slug}${j.stopped ? " (stopped it first)" : ""} — log kept at ${j.log_path}` : `remove failed: ${j.detail}`);
   loadApps();
   loadPorts();
@@ -685,8 +759,7 @@ async function removeApp(slug) {
 async function scanApps() {
   if ($("discover").style.display !== "none") { $("discover").style.display = "none"; return; }
   $("scanBtn").textContent = "scanning…";
-  const r = await fetch("/api/apps/discover");
-  const cands = await r.json();
+  const cands = await api("/api/apps/discover");
   $("scanBtn").textContent = "⌕ Scan for projects";
   if (!cands.length) {
     $("discover").innerHTML = `<div class="empty">No launchable projects found (looked for git repos with dev.sh/run.sh or npm dev/start scripts).</div>`;
@@ -729,12 +802,11 @@ async function scanApps() {
 async function adoptApps() {
   const slugs = [...document.querySelectorAll('#discover input[data-adopt]:checked')].map(el => el.dataset.adopt);
   if (!slugs.length) { toast("nothing selected"); return; }
-  const r = await fetch("/api/apps/adopt", {
+  const j = await api("/api/apps/adopt", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ slugs }),
   });
-  const j = await r.json();
   const warn = j.warnings?.length ? ` · ⚠ ${j.warnings.join(" · ")}` : "";
   const parts = [
     `added ${j.added?.length ?? 0}`,
@@ -747,8 +819,7 @@ async function adoptApps() {
 }
 
 async function appAct(slug, what) {
-  const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/${what}`, { method: "POST" });
-  const j = await r.json();
+  const j = await api(`/api/apps/${encodeURIComponent(slug)}/${what}`, { method: "POST" });
   toast(j.ok ? `${what}: ${slug} ✓` : `${what} failed: ${j.detail}`);
   setTimeout(() => { loadApps(); loadPorts(); }, 900);
 }
@@ -762,8 +833,7 @@ let portData = [];   // always the FULL list — the free-checker must see hidde
 let armedKill = null; // pid armed for two-tap confirm
 
 async function loadPorts() {
-  const r = await fetch(`/api/ports?all=true`);
-  portData = await r.json();
+  portData = await api(`/api/ports?all=true`);
   armedKill = null;
   const shown = $("showSystem").checked ? portData : portData.filter(p => p.kind === "claimed" || !p.system);
   if (!shown.length) { $("portlist").innerHTML = `<div class="empty">Nothing is listening.</div>`; checkPort(); return; }
@@ -815,8 +885,7 @@ async function killPort(pid) {
     return;
   }
   armedKill = null;
-  const r = await fetch(`/api/ports/${pid}/kill`, { method: "POST" });
-  const j = await r.json();
+  const j = await api(`/api/ports/${pid}/kill`, { method: "POST" });
   toast(j.ok ? `kill: pid ${pid} ✓` : `kill failed: ${j.detail}`);
   setTimeout(loadPorts, 800);
 }
@@ -934,8 +1003,7 @@ function toggleEvent(container, id, rerender) {
 
 let lastWatch = null;
 async function loadWatch() {
-  const r = await fetch("/api/watch");
-  lastWatch = await r.json();
+  lastWatch = await api("/api/watch");
   knownStats = lastWatch.known || {};
   agentRuns = lastWatch.agent_runs || {};
   renderWatch();
@@ -979,8 +1047,7 @@ function closeHistory() { historyOpen = false; $("sheetback").classList.remove("
 
 let lastHistory = null;
 async function loadHistory() {
-  const r = await fetch("/api/watch/history");
-  lastHistory = await r.json();
+  lastHistory = await api("/api/watch/history");
   knownStats = lastHistory.known || {};
   agentRuns = lastHistory.agent_runs || {};
   renderHistory();
@@ -1046,10 +1113,9 @@ $("watchlist").onclick = async (ev) => {
   const ackBtn = ev.target.closest("button[data-ack],button[data-ackcmd]");
   if (ackBtn) {
     const body = ackBtn.dataset.ack ? { key: ackBtn.dataset.ack } : { command: ackBtn.dataset.ackcmd };
-    const r = await fetch("/api/watch/ack", {
+    const j = await api("/api/watch/ack", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
     });
-    const j = await r.json();
     toast(j.ok ? j.detail : `ack failed: ${j.detail}`);
     loadWatch();
     return;
@@ -1070,6 +1136,14 @@ $("histevents").onclick = (ev) => {
 function loadAll() { load(); loadApps(); loadPorts(); loadWatch(); if (historyOpen) loadHistory(); }
 $("refresh").onclick = loadAll;
 $("showVendor").onchange = load;
+// Re-pull everything so the switch takes effect immediately — including an open sheet
+// and an open log panel, whose text is masked by the same api() choke point.
+$("demoToggle").onchange = () => {
+  demoMode = $("demoToggle").checked;
+  document.body.classList.toggle("demo", demoMode);
+  loadAll();
+  if (openLog) refreshLog();
+};
 $("showSystem").onchange = loadPorts;
 $("portcheck").oninput = checkPort;
 loadAll();

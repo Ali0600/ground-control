@@ -79,3 +79,36 @@ escaping and `data-`-attribute event delegation instead of inline `onclick='…$
 **Takeaway:** anything a monitored process can name itself with is untrusted input to
 every sink downstream of the monitor — escape per-context (AppleScript, HTML, JS), and
 prove the escaping with an injection-shaped test.
+
+## A language embedded in another language's string literal gets its escapes eaten
+
+When JS (or SQL, or a shell command, or a regex) lives inside a Python string, Python's
+escape rules run **first**. `\b` becomes a backspace character; `\n` becomes a newline;
+`\d` survives only because Python leaves unknown escapes alone. The result compiles and
+runs — it just doesn't do what it says.
+
+**Why it came up:** the dashboard's UI is one big Python string. Demo-mode's IP-masking
+regexes were written `/\b(?:\d{1,3}\.){3}\d{1,3}\b/` and shipped matching *nothing*,
+because both `\b` word boundaries had become 0x08. Text-asserting tests passed happily —
+they were grepping the same broken source. Extracting the block and **executing it under
+node** exposed it in one run.
+
+**Takeaway:** double every backslash when embedding one language in another's string
+literal (or use a raw string), and verify embedded code by *running* it, not by asserting
+on its text. A generic "no control characters in the output" check catches the whole class.
+
+## A sabotage that applies is still not proof — check the test can distinguish
+
+Fail-first has two failure modes, not one: the sabotage never applied (the file is
+unchanged), or it applied and the test passed anyway because the assertion can't tell the
+two states apart.
+
+**Why it came up:** breaking demo mode's stable IP map (`return make(store.size + 1)`
+instead of a memoized lookup) left the suite green. The file *had* changed — but with the
+map broken, `store.size` is always 0, so every address returned `192.0.2.1`, which
+satisfied the "same IP maps to the same fake" assertion by accident. The fix was to also
+assert that two *different* IPs get *different* fakes.
+
+**Takeaway:** after a sabotage, confirm the file changed (checksum) AND that the test went
+red. A green suite under an applied sabotage means the assertion is decorative — usually
+because it checks one direction of an invariant that needs both.

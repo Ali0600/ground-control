@@ -152,6 +152,17 @@ agents, tracks listening ports, and launches dev apps as transient agents. See
   listening now". `resolve_hostname` (dscacheutil, best-effort, cached, `""` on miss —
   output shape verified live: a `name:` line when resolvable, nothing when not) names LAN
   devices; only inbound rows about to alert are resolved, so it runs rarely.
+- **The page's JS lives inside a PYTHON string, so every backslash must be DOUBLED.**
+  A single `\b` in a regex literal is Python's backspace character (0x08) — the regex
+  compiles, matches nothing, and looks fine in review. That shipped the demo-mode IP
+  masking dead on arrival; a `test_page.py` guard now fails on any control character in
+  the script, and the scrub block is extracted and RUN under node rather than
+  text-asserted (a privacy gate can't be verified by grepping for its own source).
+- **`api()` is the only place a response becomes data** (`await fetch` + `.json()`).
+  Demo mode masks inside it, so every renderer and toast is downstream by construction —
+  a new call site that reads `.json()` itself would silently leak real IPs into a
+  recording. Pinned by a count assertion. Masking is **display-only**: never scrub
+  server-side, the API and `netwatch.json` must stay truthful.
 - **Dependency floors must stay Python-3.9-installable** (`run.sh` uses the system `python3`).
   `fastapi>=0.129` / `uvicorn>=0.40` / `pytest>=9` need ≥3.10 and are ignored in `dependabot.yml`;
   CI runs 3.12 and cannot catch this — dry-run any floor bump on the 3.9 venv. PRs also run the

@@ -70,6 +70,15 @@ deterministic and read-honest.
   your services, with the ports it touched; and an **append-only `netwatch.log.jsonl`**
   archive, because the in-memory rings are capped and a busy week would otherwise erase
   an earlier one. The archive is never trimmed — `grep`/`jq` it.
+- **🎥 Demo mode** — one header toggle masks the private data on screen so you can record
+  a public GIF or screenshot: IP addresses become documentation addresses (`192.0.2.x`,
+  the range reserved for exactly this), device names become `device-1.local`, and your
+  home path becomes `/Users/demo`. Ports, project names and agent labels stay — they're
+  the part worth showing. Consistent for the whole session (one real address always maps
+  to the same fake one), display-only (the API keeps serving the truth, nothing on disk
+  changes), and never persisted. **It masks those categories, not arbitrary secrets** —
+  it can't know that a token in a command line or a log line is sensitive, so review the
+  footage before publishing.
 - **Self-hostable**: ships a launchd plist template so the dashboard runs as *its own*
   agent and appears in its own list.
 
