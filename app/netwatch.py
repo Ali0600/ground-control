@@ -125,21 +125,61 @@ def classify_remote(host: str) -> str:
     return "public"
 
 
-def inbound(conns: list[dict], listening_ports: "set[int]") -> list[dict]:
+def _can_receive(lhost: str, addresses: "set[str]") -> bool:
+    """Could a listener bound to `addresses` have accepted a connection that arrived
+    on the local address `lhost`?
+
+    This is what separates a real inbound connection from an OUTBOUND one whose
+    ephemeral local port happens to equal a port we listen on. macOS draws ephemeral
+    ports from 49152–65535, and long-lived local tools (editors, AI agents) listen on
+    loopback ports in that same range — so the collision is routine, not exotic. A
+    port-only match reported every one of those as "a PUBLIC address connected to
+    you", which was 100% false positives on the machine this was written on.
+    """
+    # `*`, `0.0.0.0` and `::` all mean "every interface". lsof prints `*` on macOS, but
+    # a dual-stack listener printed as `::` must not read as "IPv6 only" — that would
+    # DROP real inbound IPv4 connections, and a missed connection is a worse failure
+    # here than an extra one.
+    if addresses & {"*", "0.0.0.0", "::"} or lhost in addresses:
+        return True
+    # 127.0.0.1 and ::1 are both loopback; a loopback listener serves either.
+    if classify_remote(lhost) == "loopback":
+        return any(classify_remote(a) == "loopback" for a in addresses)
+    return False
+
+
+def inbound(conns: list[dict], listeners: list[dict]) -> list[dict]:
     """Connections INTO one of our listeners from beyond loopback.
 
-    Inbound = the local port is one we're listening on (an outbound connection's
-    local port is ephemeral). Loopback remotes are this Mac talking to itself.
+    Inbound requires BOTH that the local port is one we listen on and that the
+    listener could actually have received it (see `_can_receive`) — a loopback-only
+    listener cannot be reached at this machine's public address, however suggestive
+    the port number is. Loopback remotes are this Mac talking to itself.
     """
+    bound: dict = {}
+    for e in listeners:
+        bound.setdefault(e["port"], set()).update(e.get("addresses") or [])
     out: list[dict] = []
     for c in conns:
-        if c["lport"] not in listening_ports:
+        addresses = bound.get(c["lport"])
+        if not addresses or not _can_receive(c["lhost"], addresses):
             continue
         cls = classify_remote(c["rhost"])
         if cls == "loopback":
             continue
         out.append({**c, "remote_class": cls})
     return out
+
+
+def endpoint(host: str, port) -> str:
+    """`[2607:6bc0::10]:443` — the standard bracket form for an IPv6 host+port.
+
+    Without brackets the address and the port run together into something that reads
+    as a *different, longer address*; and in the dashboard's demo mode the merged
+    string masks to a different fake than the same address elsewhere in the row, so
+    one device renders as two.
+    """
+    return f"[{host}]:{port}" if ":" in str(host) else f"{host}:{port}"
 
 
 def listener_key(entry: dict) -> str:
@@ -274,7 +314,7 @@ def observe(state: dict, listeners: list[dict], inbound_conns: list[dict],
         named = f"{c['hostname']} ({c['rhost']})" if c.get("hostname") else c["rhost"]
         _emit(state, events, kind=kind, key=key, command=c["command"], now=now,
               summary=f"{who} {named} connected to :{c['lport']} ({c['command']})",
-              detail=f"{c['rhost']}:{c['rport']} → :{c['lport']} · pid {c['pid']}",
+              detail=f"{endpoint(c['rhost'], c['rport'])} → :{c['lport']} · pid {c['pid']}",
               data=_conn_data(c))
 
     # Anything not in this scan is no longer live. The entry is NEVER dropped — it's
@@ -319,7 +359,9 @@ def _conn_data(c: dict) -> dict:
     return {
         "type": "conn",
         "command": c.get("command"), "pid": c.get("pid"), "lport": c.get("lport"),
-        "rhost": c.get("rhost"), "rport": c.get("rport"),
+        # lhost is what makes an inbound/outbound misclassification diagnosable after
+        # the fact — without it a stored event can't be re-adjudicated.
+        "lhost": c.get("lhost"), "rhost": c.get("rhost"), "rport": c.get("rport"),
         "remote_class": c.get("remote_class"), "hostname": c.get("hostname") or "",
     }
 

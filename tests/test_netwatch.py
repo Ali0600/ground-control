@@ -7,12 +7,14 @@ from app.netwatch import (
     EVENT_RING,
     NOTIFY_RING,
     RUN_LEDGER_CAP,
+    _can_receive,
     ack,
     ack_command,
     archive_records,
     archive_size,
     classify_remote,
     conn_key,
+    endpoint,
     inbound,
     listener_key,
     load_state,
@@ -116,10 +118,42 @@ def test_inbound_joins_on_listening_ports_and_drops_loopback():
         {"pid": 2, "command": "firefox", "lhost": "10.0.1.5", "lport": 61234,
          "rhost": "8.8.8.8", "rport": 443},               # OUTBOUND (ephemeral local port)
     ]
-    rows = inbound(conns, {8081})
+    rows = inbound(conns, [L(port=8081, localhost=False)])   # bound to *
     assert len(rows) == 1
     assert rows[0]["remote_class"] == "lan"
     assert rows[0]["rhost"] == "10.0.1.37"
+
+
+def test_a_loopback_listener_cannot_receive_a_connection_on_a_public_address():
+    """THE false-positive that shipped: macOS draws ephemeral ports from 49152–65535,
+    and local tools (editors, AI agents) listen on loopback ports in that same range —
+    so an OUTBOUND https connection whose local port happens to equal one of them was
+    reported as 'a PUBLIC address connected to you'. On the machine this was written
+    on, every single public alert was one of these (all with rport 443)."""
+    conns = [{"pid": 1, "command": "codex", "lhost": "2607:6bc0::10", "lport": 63900,
+              "rhost": "2606:4700::1", "rport": 443}]
+    listener = L(command="codex", port=63900, localhost=True)  # bound to 127.0.0.1 only
+    assert inbound(conns, [listener]) == []
+    # …while the same port bound to * really can receive it.
+    assert len(inbound(conns, [L(command="codex", port=63900, localhost=False)])) == 1
+
+
+def test_can_receive_is_complete_over_its_input_domain():
+    """`_can_receive` is tested directly: `inbound` drops loopback REMOTES before the
+    loopback-family branch can matter, so exercising it through `inbound` would need a
+    row that cannot occur (loopback local + non-loopback peer)."""
+    assert _can_receive("10.0.1.5", {"*"})
+    assert _can_receive("10.0.1.5", {"10.0.1.5"})
+    # every "all interfaces" spelling — `::` must NOT read as IPv6-only, or a real
+    # inbound IPv4 connection to a dual-stack listener is silently dropped
+    assert _can_receive("10.0.1.5", {"::"})
+    assert _can_receive("10.0.1.5", {"0.0.0.0"})
+    # loopback families are interchangeable
+    assert _can_receive("::1", {"127.0.0.1"})
+    assert _can_receive("127.0.0.1", {"::1"})
+    # and the case that caused the false positives
+    assert not _can_receive("2607:6bc0::10", {"127.0.0.1"})
+    assert not _can_receive("10.0.1.5", {"127.0.0.1"})
 
 
 # --------------------------------------------------------------------------- #
@@ -633,3 +667,25 @@ def test_every_entry_carries_live_after_one_cycle():
     assert entry["live"] is False
     assert "first_seen" not in entry
     assert entry["exposed"] is True  # untouched
+
+
+def test_ipv6_endpoints_are_bracketed():
+    """`2607:6bc0::10:443` reads as a longer address, not host+port — and in the
+    dashboard's demo mode that merged string masks to a DIFFERENT fake than the bare
+    address elsewhere in the same row, rendering one device as two."""
+    assert endpoint("2607:6bc0::10", 443) == "[2607:6bc0::10]:443"
+    assert endpoint("10.0.1.37", 52911) == "10.0.1.37:52911"
+
+
+def test_conn_detail_uses_the_bracketed_form():
+    state = seeded()
+    events = observe(state, [], [C(rhost="2607:6bc0::10", lport=63900, remote_class="public")], T1)
+    assert "[2607:6bc0::10]:52911 → :63900" in events[0]["detail"]
+
+
+def test_conn_data_keeps_the_local_address():
+    """Without lhost a stored event can't be re-adjudicated — which is exactly what
+    was needed to diagnose the inbound false positives after the fact."""
+    state = seeded()
+    events = observe(state, [], [C()], T1)
+    assert events[0]["data"]["lhost"] == "10.0.1.5"

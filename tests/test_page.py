@@ -359,6 +359,32 @@ console.log(JSON.stringify(out));
     assert out["port"] == 8081
 
 
+def test_one_device_masks_to_one_fake_across_summary_and_detail():
+    """The bug this test exists for shipped in a published GIF: the detail line used
+    to render `2607:6bc0::10:443`, which the masker sees as ONE longer address — a
+    different string from the bare host in the summary — so the same device appeared
+    as two different fakes in the same row. Bracketing keeps them one."""
+    import json as _json
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    assert node, "node is required to verify demo-mode masking"
+    payload = {
+        "summary": "PUBLIC address 2607:6bc0::10 connected to :63900 (codex)",
+        "detail": "[2607:6bc0::10]:443 → :63900 · pid 48553",
+    }
+    prog = _scrub_js() + f"console.log(JSON.stringify(scrub({_json.dumps(payload)})));"
+    res = subprocess.run([node, "-e", prog], capture_output=True, text=True, timeout=30)
+    assert res.returncode == 0, res.stderr
+    out = _json.loads(res.stdout)
+
+    fakes = set(re.findall(r"2001:db8::\d+", out["summary"] + " " + out["detail"]))
+    assert len(fakes) == 1, f"one device must read as one address, got {fakes}"
+    assert "2607:6bc0" not in out["detail"]
+    assert ":443" in out["detail"], "the port must survive as a port, not be absorbed"
+
+
 def test_the_page_script_carries_no_control_characters():
     """The JS lives inside a PYTHON string, so `\\b` in a regex is Python's BACKSPACE,
     not a word boundary — a regex that silently matches nothing. Backslashes must be

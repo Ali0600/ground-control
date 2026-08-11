@@ -83,6 +83,19 @@ agents, tracks listening ports, and launches dev apps as transient agents. See
   command name is attacker-influenced text and must never break out of the AppleScript
   string. Same reason the watch UI escapes every interpolation and rides ack targets in
   `data-` attributes with one delegated listener — never inline `onclick='…${key}…'`.
+- **Inbound requires an ADDRESS match, not just a port match** (`_can_receive`). macOS
+  draws ephemeral ports from 49152–65535 and local tools (editors, AI agents) listen on
+  *loopback* ports in that same range, so an OUTBOUND connection's local port routinely
+  equals a port we listen on. Port-only matching reported those as "a PUBLIC address
+  connected to you" — **every public alert on this machine was one, all with rport 443**.
+  A loopback-only listener cannot be reached at a public address; that's the discriminator.
+  Treat `*`, `0.0.0.0` and `::` all as "all interfaces" — reading `::` as IPv6-only would
+  DROP real inbound IPv4, and a missed connection is the worse failure here.
+- **Render host+port through `endpoint()` / the JS twin — IPv6 needs brackets.**
+  `2607:6bc0::10:443` reads as a longer address, and demo mode masks that merged string
+  to a *different* fake than the bare host elsewhere in the row, so one device renders as
+  two (it shipped that way in a published GIF). Events also store `lhost`, without which
+  a stored connection can't be re-adjudicated later.
 - **The network watch seeds SILENTLY on first run** — the value is the diff, and a
   day-one storm of 20 banners about your existing setup would train the user to ignore
   the channel. Corollary: deleting `netwatch.json` re-seeds (no alerts until something
