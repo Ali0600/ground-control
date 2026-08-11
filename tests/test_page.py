@@ -156,9 +156,9 @@ def test_history_sheet_fetches_on_demand_only():
     only by the sheet loader — and re-fetched by the 30s poll ONLY while the sheet is
     open, so a closed sheet costs zero extra requests."""
     js = script()
-    assert js.count('fetch("/api/watch/history")') == 1, "history fetched from exactly one place (the sheet loader)"
+    assert js.count('api("/api/watch/history")') == 1, "history fetched from exactly one place (the sheet loader)"
     loader = js.split("async function loadHistory", 1)[1].split("function renderHistory", 1)[0]
-    assert 'fetch("/api/watch/history")' in loader
+    assert 'api("/api/watch/history")' in loader
     loadall = js.split("function loadAll", 1)[1].split("\n", 1)[0]
     assert "if (historyOpen) loadHistory()" in loadall  # poll re-fetch gated on open
     # the sent-banner body/title (process-named text) is esc()'d in the sheet renderer
@@ -272,3 +272,101 @@ def test_missing_stats_degrade_quietly():
 def test_archive_size_is_surfaced():
     js = script()
     assert "h.archive_bytes" in js
+
+
+# --------------------------------------------------------------------------- #
+# Demo mode — masking private data for a public screen recording
+# --------------------------------------------------------------------------- #
+def test_api_is_the_only_place_a_response_becomes_data():
+    """Demo mode masks inside api(), so every renderer and toast is downstream of it.
+    A new call site that reads .json() itself would bypass the mask and leak — the
+    same one-choke-point rule as the shared port scan."""
+    js = script()
+    assert js.count("await fetch(") == 1, "fetch belongs to api() alone"
+    assert js.count(".json()") == 1, "api() is the only response reader"
+    fn = js.split("async function api(", 1)[1].split("\n}", 1)[0]
+    assert "await fetch(url, opts)" in fn
+    assert "return demoMode ? scrub(j) : j;" in fn
+
+
+def test_demo_toggle_exists_and_rerenders_everything():
+    js = script()
+    assert 'id="demoToggle"' in PAGE
+    assert "demoMode" not in PAGE.split("<script>", 1)[0], "state is JS, not markup"
+    handler = js.split('$("demoToggle").onchange', 1)[1].split("};", 1)[0]
+    assert "loadAll()" in handler          # covers the list, ports, watch AND open sheet
+    assert "if (openLog) refreshLog()" in handler  # an open log panel too
+    # never persisted: forgetting it's on would read as a broken dashboard
+    assert "demoMode" not in js.split("localStorage", 1)[0] or "localStorage" not in js
+
+
+def _scrub_js() -> str:
+    """The self-contained scrub block, lifted out of PAGE so it can be RUN."""
+    js = script()
+    # drop the rest of the marker line — it carries a prose comment, not code
+    block = js.split("// __SCRUB__", 1)[1].split("\n", 1)[1].split("// __/SCRUB__", 1)[0]
+    assert "function scrub(" in block
+    return block
+
+
+def test_scrub_actually_masks_what_it_claims():
+    """Text assertions can't tell a working masker from a decorative one, and this is
+    a privacy gate — so the block is extracted and EXECUTED under node."""
+    import json as _json
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    # A skip here would silently disarm a privacy gate; fail loudly instead.
+    assert node, "node is required to verify demo-mode masking"
+
+    payload = {
+        "rhost": "192.168.2.202",
+        "hostname": "Alis-iPhone.local",
+        "summary": "device Alis-iPhone.local (192.168.2.202) connected to :8081",
+        "addresses": ["127.0.0.1", "fe80::abc%en0", "*"],
+        "args": "/Users/ah/projects/app/.venv/bin/python app.py --port 8000",
+        "ts": "2026-08-07T13:10:15+00:00",
+        "label": "com.groceryhelper.recipes",
+        "port": 8081,
+        "again": "192.168.2.202",
+        "other": "10.0.1.37",
+    }
+    prog = _scrub_js() + f"""
+const out = scrub({_json.dumps(payload)});
+console.log(JSON.stringify(out));
+"""
+    res = subprocess.run([node, "-e", prog], capture_output=True, text=True, timeout=30)
+    assert res.returncode == 0, res.stderr
+    out = _json.loads(res.stdout)
+
+    assert out["rhost"] == "192.0.2.1"                    # RFC 5737 documentation range
+    # BOTH halves of the mapping are needed: "same real → same fake" alone passes even
+    # when the map is broken and every address collapses onto 192.0.2.1 (proven by
+    # sabotage), so distinct reals must also stay distinct.
+    assert out["again"] == "192.0.2.1", "same IP must map to the SAME fake all recording"
+    assert out["other"] != out["rhost"], "different devices must not collapse into one"
+    assert out["other"].startswith("192.0.2.")
+    assert out["hostname"].startswith("device-") and out["hostname"].endswith(".local")
+    assert "192.168.2.202" not in out["summary"] and "Alis-iPhone" not in out["summary"]
+    assert "192.0.2.1" in out["summary"]
+    assert out["addresses"][0] == "127.0.0.1", "loopback stays real (else every row reads exposed)"
+    assert out["addresses"][1].startswith("2001:db8::")   # RFC 3849
+    assert out["addresses"][2] == "*"
+    assert out["args"] == "/Users/demo/projects/app/.venv/bin/python app.py --port 8000"
+    assert out["ts"] == "2026-08-07T13:10:15+00:00", "a clock time is not an IPv6 address"
+    assert out["label"] == "com.groceryhelper.recipes", "labels are the portfolio — kept"
+    assert out["port"] == 8081
+
+
+def test_the_page_script_carries_no_control_characters():
+    """The JS lives inside a PYTHON string, so `\\b` in a regex is Python's BACKSPACE,
+    not a word boundary — a regex that silently matches nothing. Backslashes must be
+    doubled. This caught the demo-mode IP regexes being dead on arrival; the check is
+    generic so the next regex added here can't repeat it."""
+    js = script()
+    bad = {c for c in js if ord(c) < 9 or 11 <= ord(c) <= 12 or 14 <= ord(c) <= 31}
+    assert not bad, (
+        f"control characters in the page script: {sorted(hex(ord(c)) for c in bad)} — "
+        "a single-backslash escape leaked through Python's string parsing"
+    )
