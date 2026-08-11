@@ -1146,6 +1146,16 @@ $("demoToggle").onchange = () => {
 };
 $("showSystem").onchange = loadPorts;
 $("portcheck").oninput = checkPort;
+
+// `?demo=1` (or #demo) arms masking BEFORE the first fetch, so the very first frame a
+// screen recorder captures is already masked. Clicking the toggle leaves a window —
+// however short — where real addresses are on screen, and one unmasked frame in a
+// published GIF is exactly what this feature exists to prevent.
+if (/[?&]demo=1\\b/.test(location.search) || location.hash === "#demo") {
+  demoMode = true;
+  $("demoToggle").checked = true;
+  document.body.classList.add("demo");
+}
 loadAll();
 setInterval(loadAll, 30000);
 </script></body></html>
