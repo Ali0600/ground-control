@@ -112,3 +112,38 @@ assert that two *different* IPs get *different* fakes.
 **Takeaway:** after a sabotage, confirm the file changed (checksum) AND that the test went
 red. A green suite under an applied sabotage means the assertion is decorative — usually
 because it checks one direction of an invariant that needs both.
+
+## A port number is not an identity: match the address too
+
+Two sockets can share a port number and have nothing to do with each other. An
+*outbound* connection gets an ephemeral local port (macOS: 49152–65535), and long-lived
+local tools listen on loopback ports in that same range — so "this connection's local
+port equals a port we listen on" is satisfied constantly by traffic flowing the other
+way.
+
+**Why it came up:** the network watch flagged five "PUBLIC address connected to you"
+alerts, in red, as its most serious finding. Every one was the machine's own HTTPS
+traffic to an API. The tell was in the data the whole time: `rport=443`. A client
+connecting *to* you uses an ephemeral source port; a remote port of 443 means *you* are
+the client. The fix isn't a heuristic on the port, it's the structural fact that a
+loopback-only listener cannot receive a connection addressed to a public IP.
+
+**Takeaway:** when joining two observations on an identifier, ask what else must agree
+for the join to be meaningful — and prefer a structural impossibility ("this listener
+cannot receive that address") over a heuristic ("that port looks like a server"), because
+a heuristic can be evaded and a structure cannot.
+
+## Bracket IPv6 host:port, or the port becomes part of the address
+
+`2607:6bc0::10:443` is ambiguous — an IPv6 address is already full of colons, so the
+port merges into it and reads as a different, longer address. `[host]:port` exists
+precisely to disambiguate.
+
+**Why it came up:** the unbracketed form reached a *published* demo GIF, where the
+dashboard's masking layer treated the merged string as its own address and mapped it to
+a different placeholder than the same host elsewhere in the row — so one device rendered
+as two, and the artifact looked broken to anyone reading carefully.
+
+**Takeaway:** format a compound value at the point it becomes text, using the notation
+its spec defines. Anything downstream that pattern-matches the text — a masker, a log
+parser, a linkifier — inherits the ambiguity, and the damage surfaces far from the cause.

@@ -66,7 +66,10 @@ def _watch_once() -> None:
     """One watch cycle: diff the port scan for network changes AND the agent list for
     failures, then post (and record) every banner."""
     scanned, _specs, agents = _scan_ports()
-    inb = netwatch.inbound(netwatch.established(), {e["port"] for e in scanned})
+    # Pass the scanned listeners, not just their ports: `inbound` needs each listener's
+    # bound ADDRESSES to tell a real inbound connection from an outbound one whose
+    # ephemeral local port collides with a port we happen to listen on.
+    inb = netwatch.inbound(netwatch.established(), scanned)
     # Best-effort device name per inbound remote — only for rows about to alert (one per
     # device+port), so the dscacheutil lookup runs rarely. Cached in netwatch.
     for c in inb:
@@ -944,6 +947,10 @@ function sightingLines(key, countLabel) {
     + cardLine(countLabel, `${s.sessions || 1}×`);
 }
 
+// `[2607:6bc0::10]:443`, not `2607:6bc0::10:443` — unbracketed, an IPv6 address and its
+// port merge into what reads as a different address (and mask to a different fake).
+const endpoint = (host, port) => String(host).includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
+
 function evCard(e) {
   const d = e.data || {};
   let lines = cardLine("when", new Date(e.ts).toLocaleString())
@@ -960,7 +967,7 @@ function evCard(e) {
     lines += sightingLines(e.key, "times listening");
     if (d.args) lines += `<div class="cl"><span class="ck">command line</span><span class="cv mono">${esc(d.args)}</span></div>`;
   } else if (d.type === "conn") {
-    lines += cardLine("remote", `${d.rhost}:${d.rport}`) + cardLine("device", d.hostname || "—")
+    lines += cardLine("remote", endpoint(d.rhost, d.rport)) + cardLine("device", d.hostname || "—")
       + cardLine("local port", `:${d.lport}`) + cardLine("network", d.remote_class)
       + cardLine("command", `${d.command} (pid ${d.pid})`);
     lines += sightingLines(e.key, "connections");
