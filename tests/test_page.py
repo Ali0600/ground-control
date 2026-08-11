@@ -370,3 +370,16 @@ def test_the_page_script_carries_no_control_characters():
         f"control characters in the page script: {sorted(hex(ord(c)) for c in bad)} — "
         "a single-backslash escape leaked through Python's string parsing"
     )
+
+
+def test_demo_can_be_armed_by_url_before_the_first_fetch():
+    """`?demo=1` must set demoMode BEFORE loadAll(), or the first render — the first
+    frame a recorder captures — shows real IPs. Clicking the toggle always leaves that
+    window open, which is precisely what this feature exists to prevent."""
+    js = script()
+    boot = js.split('$("portcheck").oninput = checkPort;', 1)[1]
+    arm, _, rest = boot.partition("loadAll();")
+    assert "demoMode = true" in arm, "arm demo mode before the first loadAll()"
+    assert "location.search" in arm and "location.hash" in arm
+    assert '$("demoToggle").checked = true' in arm, "the checkbox must reflect it"
+    assert 'classList.add("demo")' in arm, "and so must the visible pill"
