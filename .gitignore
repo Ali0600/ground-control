@@ -26,3 +26,4 @@ netwatch.json
 netwatch.json.bak
 netwatch.json.tmp
 netwatch.log.jsonl
+netwatch.json.bak-*
