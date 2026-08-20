@@ -41,13 +41,26 @@ const FRAMES = path.join(OUT, "frames");
 const DEMO_APP = "waymark";
 
 let frame = 0;
-const scenes = [];
+const scenes = [];    // visible text per scene — the privacy gate reads this
+const manifest = [];  // {file, hold} — assemble-demo.sh turns this into frame durations
 
-async function shoot(page, n = 8) {
-  // Several identical frames per scene = a readable dwell at a fixed frame rate.
-  for (let i = 0; i < n; i++) {
-    await page.screenshot({ path: path.join(FRAMES, `f${String(frame++).padStart(4, "0")}.png`) });
-  }
+/** How long a caption needs to be on screen to actually be READ.
+ *
+ *  The first version of this script faked dwell time by capturing the same screenshot
+ *  8–12× and playing at a fixed 10fps, which put each caption on screen for under a
+ *  second — unreadable, and 90% of the file was duplicate frames. Now each scene is one
+ *  frame held for a duration derived from its own caption, so timing follows the copy
+ *  instead of being hand-tuned per scene.
+ */
+function readingTime(text) {
+  const words = text.trim().split(/\s+/).length;
+  return Math.min(5, Math.max(2.6, 1.2 + words * 0.28));
+}
+
+async function shoot(page, hold) {
+  const file = `f${String(frame++).padStart(4, "0")}.png`;
+  await page.screenshot({ path: path.join(FRAMES, file) });
+  manifest.push({ file, hold: Number(hold.toFixed(2)) });
 }
 
 async function caption(page, text) {
@@ -55,15 +68,15 @@ async function caption(page, text) {
   await page.waitForTimeout(250);
 }
 
-/** One scene: set the caption, let the UI settle, capture, and record the visible text
- *  so the privacy gate can assert over exactly what was filmed. */
-async function scene(page, text, { before, dwell = 8, settle = 700 } = {}) {
+/** One scene: set the caption, let the UI settle, capture one frame, and record the
+ *  visible text so the privacy gate can assert over exactly what was filmed. */
+async function scene(page, text, { before, hold, settle = 700 } = {}) {
   if (before) await before();
   await caption(page, text);
   await page.waitForTimeout(settle);
-  await shoot(page, dwell);
+  await shoot(page, hold ?? readingTime(text));
   scenes.push({ caption: text, text: await page.evaluate(() => document.body.innerText) });
-  console.log(`  ✓ ${text}`);
+  console.log(`  ✓ ${manifest[manifest.length - 1].hold}s  ${text}`);
 }
 
 const main = async () => {
@@ -114,11 +127,16 @@ const main = async () => {
 
     console.log("recording…");
 
-    await scene(page, "Every launchd agent and dev server on your Mac, in one place");
+    await scene(page, "Every scheduled job and dev server, in one place");
 
+    // The one scene that shows a CHANGE rather than a still, so it gets two frames:
+    // the row as "stopped" (brief), then as "running" after the click.
     await scene(page, "Start a dev server without hunting for a terminal", {
+      before: () => scrollTo("#applist"),
+      hold: 1.6,
+    });
+    await scene(page, "One click — it starts as a real launchd agent", {
       before: async () => {
-        await scrollTo("#applist");
         // Click Start on the demo app's row (title="Start", inside its row).
         await page.click(`[data-log-key="app:${DEMO_APP}"] button[title="Start"]`);
         // Wait for reality, not a timeout: the row must actually flip to running.
@@ -128,26 +146,23 @@ const main = async () => {
         }, DEMO_APP, { timeout: 30000 });
       },
       settle: 1200,
-      dwell: 10,
     });
 
-    await scene(page, "It runs as a real launchd agent — status, exit code, logs", {
+    await scene(page, "Status, exit code and logs for every job", {
       before: () => scrollTo("#list"),
     });
 
-    await scene(page, "Which project owns :3000? Every listening port, attributed", {
+    // Merged: the port attribution and the "exposed" flag are one idea — who holds a
+    // port, and whether it is reachable from outside this machine.
+    await scene(page, "Which project owns :3000 — and what's exposed", {
       before: () => scrollTo("#portlist"),
-      dwell: 10,
     });
 
-    await scene(page, "'exposed' = bound beyond loopback, reachable from your network");
-
-    await scene(page, "It watches the network and alerts on what changes", {
+    // Merged: "it watches" + "here is what it watches for" were two captions over the
+    // same screen.
+    await scene(page, "It alerts on new listeners, LAN exposure and failed jobs", {
       before: () => scrollTo("#watchlist"),
-      dwell: 10,
     });
-
-    await scene(page, "New listeners · LAN exposure · devices connecting · failed jobs");
 
     await scene(page, "Network History: every event, and every alert it sent", {
       before: async () => {
@@ -155,7 +170,6 @@ const main = async () => {
         await page.waitForSelector("#histsheet.open");
         await page.waitForTimeout(600);
       },
-      dwell: 10,
     });
 
     // Which event to expand. The card shows a FULL COMMAND LINE, so leaving it as
@@ -174,7 +188,8 @@ const main = async () => {
         await page.evaluate(() => document.querySelector("#histevents .evcard")
           .scrollIntoView({ block: "center", behavior: "instant" }));
       },
-      dwell: 12,
+      // the card carries the run ledger — worth an extra beat
+      hold: 4.6,
     });
 
     await scene(page, "Every device that ever connected to your machine", {
@@ -183,7 +198,6 @@ const main = async () => {
         await page.evaluate(() => document.getElementById("histdevices")
           .scrollIntoView({ block: "center", behavior: "instant" }));
       },
-      dwell: 10,
     });
 
     await scene(page, "Demo mode masks IPs, device names and paths for sharing", {
@@ -192,11 +206,13 @@ const main = async () => {
         await page.waitForTimeout(400);
         await page.evaluate(() => window.scrollTo(0, 0));
       },
-      dwell: 12,
+      hold: 4.0,   // last frame before the loop restarts
     });
 
     await writeFile(path.join(OUT, "scenes.json"), JSON.stringify(scenes, null, 1));
-    console.log(`\n${frame} frames → ${FRAMES}`);
+    await writeFile(path.join(OUT, "manifest.json"), JSON.stringify(manifest, null, 1));
+    const total = manifest.reduce((n, m) => n + m.hold, 0);
+    console.log(`\n${frame} frames · ${total.toFixed(1)}s total → ${FRAMES}`);
   } finally {
     // Leave the machine as we found it, whatever happened above.
     await page.request.post(`${BASE}/api/apps/${DEMO_APP}/stop`).catch(() => {});
