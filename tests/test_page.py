@@ -161,9 +161,13 @@ def test_history_sheet_fetches_on_demand_only():
     assert 'api("/api/watch/history")' in loader
     loadall = js.split("function loadAll", 1)[1].split("\n", 1)[0]
     assert "if (historyOpen) loadHistory()" in loadall  # poll re-fetch gated on open
-    # the sent-banner body/title (process-named text) is esc()'d in the sheet renderer
+    # the sent-banner body (process-named text) is esc()'d in the sheet renderer
     render = js.split("function renderHistory", 1)[1]
-    assert "esc(nt.body)" in render and "esc(nt.title)" in render
+    assert "esc(nt.body)" in render
+    # The banner TITLE is deliberately not rendered: every banner this app sends carries
+    # the app's own name, so on screen it is a constant rather than information — and
+    # after the rename it displayed the OLD name back at you. Still stored, just not shown.
+    assert "nt.title" not in render
 
 
 def test_history_sheet_closes_by_backdrop_and_escape():

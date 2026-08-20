@@ -1112,7 +1112,12 @@ function renderHistory() {
       <span class="pill ${nt.ok ? "ok" : "bad"}">${nt.ok ? "sent" : "failed"}</span>
       <div class="meta">
         <div class="sub">${esc(nt.body)}</div>
-        <div class="sub muted">${esc(nt.title)} · ${rel(nt.ts)}</div>
+        <!-- nt.title is deliberately NOT rendered: every banner this app sends carries
+             the app's own name, so in the app's own UI it is a constant, not
+             information — and after the rename it showed the OLD name back at you.
+             The value stays in the state ring and the archive; it just isn't noise
+             on screen. -->
+        <div class="sub muted">${rel(nt.ts)}</div>
       </div>
     </div>`).join("") || `<div class="empty">No banners sent yet.</div>`;
 }
