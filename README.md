@@ -1,13 +1,28 @@
-# launchd dashboard
+# Ground Control
 
-A small, self-hosted web UI to **inventory and control the `launchd` agents on your
-Mac** — see every scheduled job in one place, when it runs next, whether its last run
-passed, tail its logs, and run/stop/enable it with a click. Built for turning a laptop
-into an always-on personal server without losing track of the jobs piling up in
-`~/Library/LaunchAgents`.
+**A self-hosted control tower for your Mac.**
 
-No magic: every fact comes from `launchctl` and the plist files directly, so it's
-deterministic and read-honest.
+![Ground Control](docs/demo.gif)
+
+Ground Control turns a laptop into a legible personal server. It inventories every
+scheduled job with its health and next run, launches your dev servers as first-class
+managed services, attributes every listening TCP port to the process and project that
+owns it, and watches the network for change — a new listener, a port going LAN-exposed,
+an unfamiliar device connecting, a job failing silently. It raises native macOS
+notifications and keeps a permanent record: per-job run ledgers, per-device sighting
+history, and an append-only event archive. A demo mode masks private data so you can
+share what it sees.
+
+Four questions it answers that nothing else on the machine will:
+
+- *What is scheduled to run, and did last week's run actually happen?*
+- *Which project owns `:3000`, and why is my dev server on `:3001`?*
+- *Is anything I'm running reachable from outside this machine?*
+- *Did that background job die three weeks ago without telling me?*
+
+No magic: every fact comes from `launchctl`, plist files, and `lsof` directly, so it's
+deterministic and read-honest. It runs **on** launchd (each app becomes a managed agent,
+and Ground Control self-hosts as one) — the repo was formerly `launchd-dashboard`.
 
 ## Highlights
 - **Auto-discovery** of user LaunchAgents (`~/Library/LaunchAgents`, `/Library/LaunchAgents`),
@@ -88,10 +103,10 @@ deterministic and read-honest.
 > background agents from `~/Documents`, `~/Desktop`, and `~/Downloads` — a launchd
 > agent there dies with `PermissionError: [Errno 1] Operation not permitted` before
 > your code even runs (your terminal works only because Terminal.app holds the
-> folder grant). Clone to a home-root path like `~/launchd-dashboard` instead.
+> folder grant). Clone to a home-root path like `~/ground-control` instead.
 
 ```bash
-cd ~/launchd-dashboard
+cd ~/ground-control
 ./run.sh                       # creates .venv on first run, serves on :8787
 # open http://127.0.0.1:8787
 ```
@@ -105,7 +120,7 @@ python3 -m venv .venv && ./.venv/bin/pip install -r requirements-dev.txt
 ## Run it as an always-on agent
 ```bash
 ./run.sh                       # once, to create the .venv
-sed "s|/Users/CHANGE_ME|$HOME|g" com.launchddash.server.plist.example \
+sed "s|/Users/CHANGE_ME/ground-control|$PWD|g" com.launchddash.server.plist.example \
   > ~/Library/LaunchAgents/com.launchddash.server.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.launchddash.server.plist
 ```
@@ -113,8 +128,10 @@ Now `http://127.0.0.1:8787` is always up, and the dashboard lists itself.
 
 Stop the `./run.sh` instance first if it's running — the agent can't bind :8787 while
 it's held (the dashboard's own Listening-ports section will show you the holder).
-The template assumes the repo is at `~/launchd-dashboard`; if it's elsewhere, keep it
-out of TCC-protected folders (see Quickstart) and adjust the paths.
+The `sed` above substitutes wherever you cloned, so the template works from any path —
+just keep it out of the TCC-protected folders (see Quickstart). The agent label stays
+`com.launchddash.server`: a label is an identity that running jobs and installed plists
+refer to, so renaming it would only churn.
 
 ## API
 | Method | Path | Purpose |

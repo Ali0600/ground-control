@@ -1,8 +1,12 @@
-"""launchd-dashboard — a local web UI to inventory and control macOS launchd agents.
+"""Ground Control — a self-hosted control tower for your Mac.
+
+Inventories and controls launchd jobs, launches dev servers as managed services,
+attributes every listening port to the project that owns it, and watches the network
+for change (new listeners, LAN exposure, connecting devices, failed jobs).
 
 Run: uvicorn app.main:app --host 127.0.0.1 --port 8787
 Binds to localhost by design: the control endpoints (run/stop/enable) mutate real
-jobs, so the dashboard is not meant to be exposed beyond your machine.
+jobs, so this is not meant to be exposed beyond your machine.
 """
 
 from __future__ import annotations
@@ -20,6 +24,10 @@ from . import annotations, apps, discover, launchd, netwatch, ports
 # Last discovery scan, server-side. Adoption only ever references these by slug —
 # the browser never supplies a directory or command.
 _discovered: list = []
+
+# The product name, in one place. It is also the title every macOS banner carries, so
+# a rename must not leave half the notifications under an old name.
+APP_NAME = "Ground Control"
 
 WATCH_INTERVAL_S = 30
 _watch_status = {"errors": 0, "last_run": None}
@@ -89,12 +97,12 @@ def _watch_once() -> None:
     posted = []
     if len(banners) > 3:  # collapse a storm into one banner; details are in the page
         body = f"{len(banners)} new events — open the dashboard"
-        posted.append((now, "launchd dashboard", body,
-                       netwatch.post_notification("launchd dashboard", body)))
+        posted.append((now, APP_NAME, body,
+                       netwatch.post_notification(APP_NAME, body)))
     else:
         for ev in banners:
-            posted.append((now, "launchd dashboard", ev["summary"],
-                           netwatch.post_notification("launchd dashboard", ev["summary"])))
+            posted.append((now, APP_NAME, ev["summary"],
+                           netwatch.post_notification(APP_NAME, ev["summary"])))
     if posted:  # record what we actually tried to send (incl. failed sends)
         with netwatch.STATE_LOCK:
             state = netwatch.load_state()
@@ -122,7 +130,7 @@ async def _lifespan(_app: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="launchd dashboard", lifespan=_lifespan)
+app = FastAPI(title=APP_NAME, lifespan=_lifespan)
 
 
 def _app_or_404(slug: str) -> apps.AppSpec:
@@ -359,7 +367,7 @@ def index() -> str:
 PAGE = """<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>launchd dashboard</title>
+<title>Ground Control</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -431,7 +439,7 @@ PAGE = """<!DOCTYPE html>
 </style></head>
 <body><div class="wrap">
   <header>
-    <div class="title"><span>⌁</span> launchd dashboard <span class="muted mono" style="font-size:12px;font-weight:400" id="domain"></span></div>
+    <div class="title"><span>⌁</span> Ground Control <span class="muted mono" style="font-size:12px;font-weight:400" id="domain"></span></div>
     <div style="display:flex;gap:8px;align-items:center">
       <button id="histBtn" onclick="openHistory()" style="font-size:12px">Network History</button>
       <label class="muted" style="display:flex;align-items:center;gap:6px;font-size:12px"
@@ -1019,7 +1027,7 @@ function renderWatch() {
   const w = lastWatch;
   if (!w) return;
   const n = w.active.length;
-  document.title = n ? `(${n}!) launchd dashboard` : "launchd dashboard";
+  document.title = n ? `(${n}!) Ground Control` : "Ground Control";
   $("watchmeta").textContent =
     (w.errors ? `⚠ ${w.errors} watch errors · ` : "") +
     (w.notify_failures ? `✗ ${w.notify_failures} failed sends · ` : "") +

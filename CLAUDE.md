@@ -1,8 +1,18 @@
-# launchd-dashboard — agent notes
+# Ground Control — agent notes
 
-Local FastAPI + zero-dependency web UI (127.0.0.1:8787) that inventories macOS `launchd`
-agents, tracks listening ports, and launches dev apps as transient agents. See
-[README.md](README.md) for the user-facing picture.
+Local FastAPI + zero-dependency web UI (127.0.0.1:8787): a control tower for the machine —
+inventories and controls launchd jobs, launches dev apps as managed agents, attributes
+every listening port to its project, and watches the network for change (new listeners,
+LAN exposure, connecting devices, failed jobs). See [README.md](README.md) for the
+user-facing picture.
+
+**Naming (renamed from "launchd dashboard" 2026-08-11).** The product and the GitHub repo
+are **Ground Control**; `APP_NAME` in `app/main.py` is the single source for the UI title,
+the FastAPI title and every banner title. Three things deliberately KEEP the old name and
+must not be "tidied": the agent labels (`com.launchddash.*` — a label is an identity that
+installed plists and running jobs refer to), this machine's checkout path
+(`~/launchd-dashboard`, which the installed server plist points at absolutely), and the
+historical entries in `docs/DECISIONS.md` / `docs/learnings.md`, which are records.
 
 ## Layout
 - `app/launchd.py` — agent discovery, `launchctl` parsing, schedule humanize/next-run, control.

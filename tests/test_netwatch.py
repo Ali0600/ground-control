@@ -628,7 +628,7 @@ def test_archive_appends_one_json_line_per_record(tmp_path):
     p = tmp_path / "netwatch.log.jsonl"
     state = seeded()
     events = observe(state, [L(command="mystery", port=4444, localhost=False)], [], T1)
-    archive_records(events, [(T1, "launchd dashboard", "a body", True)], p)
+    archive_records(events, [(T1, "Ground Control", "a body", True)], p)
     lines = [json.loads(x) for x in p.read_text().splitlines()]
     assert [x["t"] for x in lines] == ["event", "banner"]
     assert lines[0]["kind"] == "new_exposed"
