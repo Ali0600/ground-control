@@ -166,8 +166,10 @@ def test_history_sheet_fetches_on_demand_only():
     assert "esc(nt.body)" in render
     # The banner TITLE is deliberately not rendered: every banner this app sends carries
     # the app's own name, so on screen it is a constant rather than information — and
-    # after the rename it displayed the OLD name back at you. Still stored, just not shown.
-    assert "nt.title" not in render
+    # after the rename it displayed the OLD name back at you. Still stored, just not
+    # shown, so the assertion is on the INTERPOLATION, not on the identifier appearing
+    # anywhere (a comment explaining the rule would otherwise trip it).
+    assert "${esc(nt.title)}" not in render and "${nt.title}" not in render
 
 
 def test_history_sheet_closes_by_backdrop_and_escape():
