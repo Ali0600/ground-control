@@ -1108,11 +1108,15 @@ function renderHistory() {
   $("histevents").innerHTML = evListHTML(evs, false) || `<div class="empty">No events yet.</div>`;
   $("histdevices").innerHTML = devicesHTML() ||
     `<div class="empty">No device has connected to your services yet.</div>`;
+  // A banner's stored title is always this app's own name, so on screen it would be a
+  // constant rather than information — and after the rename it displayed the OLD name
+  // back at you. Only the body and the time are rendered; the title stays in the state
+  // ring and the archive, because that is a record of what was actually sent.
   $("histnotifs").innerHTML = notes.map(nt => `<div class="row">
       <span class="pill ${nt.ok ? "ok" : "bad"}">${nt.ok ? "sent" : "failed"}</span>
       <div class="meta">
         <div class="sub">${esc(nt.body)}</div>
-        <div class="sub muted">${esc(nt.title)} · ${rel(nt.ts)}</div>
+        <div class="sub muted">${rel(nt.ts)}</div>
       </div>
     </div>`).join("") || `<div class="empty">No banners sent yet.</div>`;
 }
