@@ -114,7 +114,7 @@ def test_watch_section_is_polled_with_everything_else():
 
 def test_watch_title_badge_sets_and_resets():
     js = script()
-    assert "`(${n}!) launchd dashboard`" in js
+    assert "`(${n}!) Ground Control`" in js
     assert "document.title = n ?" in js  # ternary: resets when nothing is active
 
 
@@ -409,3 +409,23 @@ def test_demo_can_be_armed_by_url_before_the_first_fetch():
     assert "location.search" in arm and "location.hash" in arm
     assert '$("demoToggle").checked = true' in arm, "the checkbox must reflect it"
     assert 'classList.add("demo")' in arm, "and so must the visible pill"
+
+
+def test_the_product_name_is_consistent_across_every_surface():
+    """The name shows up in four places that a rename can easily half-finish: the tab
+    title, the header, the title badge, and every macOS banner. The banner titles must
+    come from APP_NAME rather than a repeated literal — a half-rename leaves your
+    notifications filed under the old name, which is invisible until one fires."""
+    import inspect
+
+    from app import main
+
+    assert main.APP_NAME == "Ground Control"
+    assert f"<title>{main.APP_NAME}</title>" in PAGE
+    assert f"⌁</span> {main.APP_NAME} " in PAGE
+    js = script()
+    assert f"`(${{n}}!) {main.APP_NAME}`" in js and f'"{main.APP_NAME}"' in js
+
+    src = inspect.getsource(main)
+    assert "post_notification(APP_NAME" in src, "banners must use the constant"
+    assert "launchd dashboard" not in src, "stale product name left in main.py"

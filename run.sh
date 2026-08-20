@@ -11,5 +11,5 @@ if [ ! -d .venv ]; then
 fi
 
 PORT="${PORT:-8787}"
-echo "launchd dashboard → http://127.0.0.1:${PORT}"
+echo "Ground Control → http://127.0.0.1:${PORT}"
 exec ./.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port "${PORT}" "$@"
