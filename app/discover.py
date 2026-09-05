@@ -40,6 +40,11 @@ CANDIDATE_ROOTS = [
 ]
 
 
+# npm's published name grammar, optionally scoped. Deliberately no shell metacharacter
+# is representable here, which is what makes the name safe to interpolate into a command.
+_NPM_NAME_RE = re.compile(r"^(?:@[a-z0-9\-~][a-z0-9\-._~]*/)?[a-z0-9\-~][a-z0-9\-._~]*$")
+
+
 def dir_identity(path: Path) -> Optional[tuple]:
     """(device, inode) — filesystem identity, the only reliable way to tell whether two
     paths are the same directory. `resolve()` is NOT enough: macOS volumes are usually
@@ -178,8 +183,16 @@ def _workspace_packages(project: Path, pj: dict) -> list[tuple[str, dict]]:
             continue
         for ws_dir in sorted(project.glob(pattern)):
             ws_pj = _read_json(ws_dir / "package.json")
-            if ws_pj and ws_pj.get("name"):
-                out.append((str(ws_pj["name"]), ws_pj))
+            name = str(ws_pj.get("name", "")) if ws_pj else ""
+            # The name is interpolated into `npm run dev -w <name>`, which is persisted
+            # to apps.json and later run by `/bin/zsh -c`. It comes from a package.json
+            # inside whatever repo happens to sit under a scanned root, so it is content
+            # we did not write. npm's own grammar is narrow enough to be the allowlist,
+            # and it contains no shell metacharacter.
+            if name and _NPM_NAME_RE.match(name):
+                out.append((name, ws_pj))
+            elif name:
+                warn(f"skipping workspace with an unusable package name {name!r}")
     return out
 
 

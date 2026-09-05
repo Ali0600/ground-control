@@ -56,9 +56,9 @@ def test_claimed_port_rows_render_without_a_kill_button():
     branch = js.split('if (p.kind === "claimed")', 1)
     assert len(branch) == 2, "the ports renderer must special-case claimed rows"
     claimed_block = branch[1].split("const where =", 1)[0]
-    assert "killPort" not in claimed_block
+    assert "data-kill" not in claimed_block and "killPort" not in claimed_block
     assert "claimed_by.length === 1" in claimed_block
-    assert "appAct(" in claimed_block
+    assert 'data-do="start"' in claimed_block, "the start affordance must survive"
 
 
 def test_live_port_rows_open_by_name_not_by_ipv4_literal():
@@ -67,16 +67,26 @@ def test_live_port_rows_open_by_name_not_by_ipv4_literal():
     refused. It's also the host dev servers' Host-header allowlists expect."""
     js = script()
     ports_render = js.split('$("portlist").innerHTML', 1)[1].split("function ", 1)[0]
-    assert "window.open('http://localhost:${p.port}'" in ports_render
-    assert "127.0.0.1:${p.port}" not in ports_render
+    # The port rides in a data-attribute now (a delegated listener builds the URL), so
+    # the row must carry one and the listener must open localhost — never a literal.
+    assert "data-open-port=" in ports_render
+    # Anchored on an INTERPOLATION, not the bare address: the comment above this
+    # renderer explains the rule and names 127.0.0.1, so a plain substring check
+    # matches the prose and fails on correct code.
+    assert "127.0.0.1:${" not in ports_render
+    listener = js.split('$("portlist").onclick', 1)[1].split("$(\"showSystem\")", 1)[0]
+    assert "http://localhost:${Number(openBtn.dataset.openPort)}" in listener
     # System listeners (AirPlay etc.) aren't web pages — no button for them.
     assert "p.system ? \"\"" in ports_render
 
 
 def test_app_rows_open_by_name_too():
     js = script()
-    assert "window.open('http://localhost:${a.open_port}'" in js
-    assert "window.open('http://127.0.0.1:" not in js
+    apps_render = js.split('$("applist").innerHTML', 1)[1].split("function ", 1)[0]
+    assert "data-open-port=" in apps_render
+    listener = js.split('$("applist").onclick', 1)[1].split('$("portlist").onclick', 1)[0]
+    assert "http://localhost:${Number(openBtn.dataset.openPort)}" in listener
+    assert "window.open(`http://127.0.0.1:" not in js and "window.open('http://127.0.0.1:" not in js
 
 
 def test_claimed_rows_have_no_open_button():
@@ -221,8 +231,8 @@ def test_rows_carry_the_log_key_the_panel_is_placed_by():
     """placeLog() finds its row by data-log-key; both row templates must emit one,
     matching the keys openLogPanel is called with (label / app:<slug>)."""
     js = script()
-    assert 'data-log-key="${a.label}"' in js
-    assert 'data-log-key="app:${a.slug}"' in js
+    assert 'data-log-key="${esc(a.label)}"' in js
+    assert 'data-log-key="app:${esc(a.slug)}"' in js
     assert '[data-log-key="${openLog}"]' in js
 
 
@@ -454,3 +464,97 @@ def test_the_whole_page_script_parses():
     assert node, "node is required to parse-check the page script"
     r = subprocess.run([node, "--check"], input=script(), capture_output=True, text=True)
     assert r.returncode == 0, f"the page script does not parse:\n{r.stderr}"
+
+
+# --------------------------------------------------------------------------- #
+# Escaping — the four renderers that predate esc()
+# --------------------------------------------------------------------------- #
+# Anchored on the `.map(` that builds the ROW, not on the innerHTML assignment: every
+# renderer assigns innerHTML twice — once for its empty state, once for the rows — and
+# splitting on the first occurrence captured the empty-state line and stopped. The ports
+# slice was 53 characters, so the escaping guard below passed while inspecting nothing.
+# The sabotage harness caught that; reading the test did not.
+RENDERERS = {
+    # name: (start marker, end marker, a string that MUST appear in the slice)
+    "agents": ("agents.map(a => {", '}).join("")', "data-agent="),
+    "apps": ("apps.map(a => {", '}).join("")', "data-app="),
+    "discover": ("cands.map(c => {", '}).join("")', "data-adopt="),
+    "ports": ("shown.map(p => {", '}).join("")', "data-kill="),
+}
+
+
+def renderer(name: str) -> str:
+    start, end, marker = RENDERERS[name]
+    js = script()
+    assert js.count(start) == 1, f"{name}: {js.count(start)} matches for {start!r}"
+    body = js.split(start, 1)[1].split(end, 1)[0]
+    # A slice that captured the wrong region is the failure mode these guards had, and
+    # it presents as a PASS. Refuse to assert over a body that cannot be the renderer.
+    assert marker in body, f"{name}: slice missing {marker!r} — wrong region captured"
+    assert len(body) > 400, f"{name}: slice is only {len(body)} chars — wrong region"
+    return body
+
+
+def test_every_renderer_escapes_the_strings_it_interpolates():
+    """Everything these four render comes from the machine: plist Labels, apps.json,
+    `lsof` process names, a scanned repo's package.json `name`, directory names. They
+    were written before esc() existed and escaped nothing, while every renderer defined
+    BELOW esc() escaped everything — a split by position, not by principle.
+
+    A dev server run from a directory called `<img src=x onerror=…>` was enough; the
+    script then runs on the dashboard's own origin and can drive every route.
+
+    The rule: no `${...}` in these renderers may reach HTML unescaped. Numeric-only
+    interpolations are allowed through `Number(...)`, and a few named locals are
+    pre-escaped or built from literals — those are listed, so a NEW bare interpolation
+    fails rather than joining an ever-growing allowlist."""
+    import re
+
+    # Locals that are already escaped or are literal HTML built above the template.
+    SAFE = {
+        "dot", "pill", "exit", "next", "note", "hover", "port", "portTag", "login",
+        "open", "action", "sub", "drift", "sharedNote", "state", "inert", "agent",
+        "exposed", "sys", "openBtn", "start", "who", "shownPort", "where",
+    }
+    offenders = []
+    for name in RENDERERS:
+        body = renderer(name)
+        for expr in re.findall(r"\$\{([^{}]*)\}", body):
+            e = expr.strip()
+            if e.startswith(("esc(", "Number(", "rel(")) or e in SAFE:
+                continue
+            # A ternary whose BOTH branches are string literals is safe whatever it
+            # contains — nothing from the API reaches the output. Each branch matches
+            # its own quote style, since a single-quoted branch legitimately holds the
+            # double quotes of an HTML attribute.
+            literal = r"""(?:'[^']*'|"[^"]*")"""
+            if re.fullmatch(rf"[^?]*\?\s*{literal}\s*:\s*{literal}", e):
+                continue
+            if e.startswith(("a.pid", "p.pid", "p.port", "a.last_exit", "a.open_port")):
+                continue  # numbers from the API, never strings
+            offenders.append(f"{name}: ${{{e}}}")
+    assert not offenders, (
+        "unescaped interpolations in a renderer:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_no_renderer_puts_a_value_inside_an_inline_handler():
+    """esc() does NOT make a value safe inside `onclick="act('${x}')"` — the browser
+    decodes &#39; back to a quote before the JS parser runs, so the string still breaks
+    out. Action values must ride in data-attributes read by a delegated listener, which
+    is what the watch renderer has always done."""
+    import re
+
+    for name in RENDERERS:
+        body = renderer(name)
+        inline = re.findall(r'on\w+="[^"]*\$\{', body)
+        assert not inline, f"{name}: value interpolated into an inline handler: {inline}"
+
+
+def test_the_delegated_listeners_are_bound_to_static_containers():
+    """The handlers must sit on the containers whose innerHTML is replaced, not on the
+    rows — a per-row binding would be lost on every 30s poll, and re-binding inside a
+    render function accumulates handlers."""
+    js = script()
+    for container in ("list", "applist", "portlist"):
+        assert f'$("{container}").onclick' in js, f"no delegated handler for #{container}"

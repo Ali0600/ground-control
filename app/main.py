@@ -16,8 +16,9 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import annotations, apps, discover, launchd, netwatch, ports
 
@@ -132,6 +133,70 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(title=APP_NAME, lifespan=_lifespan)
 
+# --------------------------------------------------------------------------- #
+# Cross-origin write protection
+# --------------------------------------------------------------------------- #
+# Binding to loopback does NOT protect the mutating routes, because the browser is on
+# loopback too. Nine of them take no request body at all, which makes a cross-origin
+# <form method=POST> a CORS *simple request*: no preflight, the request is delivered
+# and EXECUTED, and only the response is withheld. Any page the user visited could have
+# looped pid 1..99999 against /api/ports/{pid}/kill and SIGTERMed every listener they
+# own, or disabled a backup agent by guessing its label.
+#
+# The JSON-body routes (adopt, ack, DELETE) were already safe — a JSON content-type
+# forces a preflight that has nowhere to succeed. It is precisely the argument-free
+# ones that were reachable.
+#
+# The check reads FETCH METADATA rather than minting a token: `Sec-Fetch-Site` is set
+# by the browser and cannot be forged by page script. A missing header means the caller
+# is not a browser (curl, the demo recorder, the CLAUDE.md playbook), which is allowed —
+# the threat is a page the user visits, and a local process can reach the socket anyway.
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+_SAME_SITE = frozenset({"same-origin", "none"})
+
+
+class BlockCrossOriginWrites:
+    """Refuse a state-changing request that a foreign origin initiated."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http" or scope["method"] in _SAFE_METHODS:
+            await self.app(scope, receive, send)
+            return
+
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
+        site = headers.get("sec-fetch-site")
+        origin = headers.get("origin")
+
+        if site is not None:
+            allowed = site in _SAME_SITE
+        elif origin is not None:
+            # No fetch metadata (an older browser): compare Origin against the Host we
+            # were addressed as, so the port is whatever run.sh was given.
+            host = headers.get("host", "")
+            allowed = origin.rstrip("/") in {f"http://{host}", f"https://{host}"}
+        else:
+            allowed = True  # not a browser request
+
+        if not allowed:
+            apps.warn(f"refused cross-origin {scope['method']} {scope['path']} (origin={origin!r})")
+            response = JSONResponse(
+                {"ok": False, "detail": "cross-origin writes are refused"}, status_code=403
+            )
+            await response(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(BlockCrossOriginWrites)
+# DNS rebinding: an attacker-controlled name resolving to 127.0.0.1 would otherwise let
+# a foreign page READ responses (the check above only guards writes). Starlette strips
+# the port before matching, so these entries cover whatever port run.sh is given.
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]", "::1"])
+
 
 def _app_or_404(slug: str) -> apps.AppSpec:
     for spec in apps.load_apps():
@@ -141,6 +206,15 @@ def _app_or_404(slug: str) -> apps.AppSpec:
 
 
 def _plist_or_404(label: str) -> dict:
+    # Dashboard-launched apps are NOT agents here. They are hidden from /api/agents and
+    # they have their own routes, which also clean up the generated plist — stopping one
+    # through this path would leave the plist installed and the Apps section wrong. They
+    # are the labels an attacker can guess most reliably, since we mint them ourselves.
+    if label.startswith(apps.APP_LABEL_PREFIX):
+        raise HTTPException(
+            status_code=404,
+            detail=f"{label!r} is a dashboard-managed app — use /api/apps/{{slug}} instead",
+        )
     path = launchd.find_plist(label)
     plist = launchd.load_plist(path) if path else None
     if not plist:
@@ -162,8 +236,14 @@ def api_agents(all: bool = False) -> JSONResponse:
     return JSONResponse(agents)
 
 
+# `lines` is clamped: unbounded, `lines=0` reads as `data[0:]` — the WHOLE file
+# through a parameter that reads like a limit — and a negative is nearly the whole
+# file. server.log is already 5.5 MB.
+_LINES = Query(200, ge=1, le=5000, description="how many trailing lines to return")
+
+
 @app.get("/api/agents/{label}/log")
-def api_log(label: str, lines: int = 200) -> dict:
+def api_log(label: str, lines: int = _LINES) -> dict:
     return launchd.read_log_tail(_plist_or_404(label), lines=lines)
 
 
@@ -279,7 +359,7 @@ def api_apps_adopt(payload: dict = Body(...)) -> dict:
 
 
 @app.get("/api/apps/{slug}/log")
-def api_app_log(slug: str, lines: int = 200) -> dict:
+def api_app_log(slug: str, lines: int = _LINES) -> dict:
     spec = _app_or_404(slug)
     return launchd.read_log_tail({"StandardOutPath": str(spec.log_path)}, lines=lines)
 
@@ -588,6 +668,19 @@ async function api(url, opts) {
   return demoMode ? scrub(j) : j;
 }
 
+// Escaping, defined ONCE and above every renderer. It used to sit halfway down the
+// script, next to the watch UI, and the renderers below it escaped everything while the
+// four above it escaped nothing — a split by position rather than by principle. Every
+// string these renderers interpolate comes from the machine: plist labels, apps.json,
+// `lsof` process names, a scanned repo's package.json name, and directory names.
+const esc = (s) => String(s).replace(/[&<>"']/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+// NOTE: esc() is for TEXT and quoted ATTRIBUTE positions only. It cannot make a value
+// safe inside a JS string in an attribute (`onclick="act('${x}')"`) — the browser
+// decodes the entity before the JS parser runs, so a quote still breaks out. Values
+// that drive an action ride in data-attributes read by a delegated listener instead.
+
 async function load() {
   const all = $("showVendor").checked;
   const agents = await api(`/api/agents?all=${all}`);
@@ -604,21 +697,21 @@ async function load() {
     const dot = a.status === "running" ? "run" : a.status === "unloaded" ? "off" : (a.healthy ? "ok" : "bad");
     const exit = a.last_exit === null ? "" : ` · exit ${a.last_exit}`;
     const pill = a.status === "unloaded" ? `<span class="pill off">unloaded</span>`
-      : a.healthy ? `<span class="pill ${a.status==='running'?'run':'ok'}">${a.status}</span>`
+      : a.healthy ? `<span class="pill ${a.status==='running'?'run':'ok'}">${esc(a.status)}</span>`
       : `<span class="pill bad">failed</span>`;
     const next = a.next_run ? ` · next ${rel(a.next_run)}` : "";
-    const note = a.annotation?.purpose ? ` · <span style="color:#aeb4c0">${a.annotation.purpose}</span>` : "";
+    const note = a.annotation?.purpose ? ` · <span style="color:#aeb4c0">${esc(a.annotation.purpose)}</span>` : "";
     const hover = a.annotation ? [a.annotation.note, a.annotation.repo].filter(Boolean).join(" — ") : "";
-    return `<div class="row" data-log-key="${a.label}" ${hover ? `title="${hover.replace(/"/g, '&quot;')}"` : ""}>
+    return `<div class="row" data-log-key="${esc(a.label)}" ${hover ? `title="${esc(hover)}"` : ""}>
       <span class="dot ${dot}"></span>
       <div class="meta">
-        <div class="lbl mono">${a.label}${a.vendor ? ' <span class="muted" style="font-weight:400">· vendor</span>' : ''}</div>
-        <div class="sub">${a.schedule}${exit} · ran ${rel(a.last_run)}${next}${note}</div>
+        <div class="lbl mono">${esc(a.label)}${a.vendor ? ' <span class="muted" style="font-weight:400">· vendor</span>' : ''}</div>
+        <div class="sub">${esc(a.schedule)}${exit} · ran ${rel(a.last_run)}${next}${note}</div>
       </div>
       ${pill}
-      <button class="icon" title="Run now" onclick="act('${a.label}','run')">▶</button>
-      <button class="icon" title="Stop" onclick="act('${a.label}','stop')">■</button>
-      <button class="icon" title="Logs" onclick="showLog('${a.label}')">≣</button>
+      <button class="icon" title="Run now" aria-label="Run ${esc(a.label)} now" data-agent="${esc(a.label)}" data-do="run">▶</button>
+      <button class="icon" title="Stop" aria-label="Stop ${esc(a.label)}" data-agent="${esc(a.label)}" data-do="stop">■</button>
+      <button class="icon" title="Logs" aria-label="Logs for ${esc(a.label)}" data-agent="${esc(a.label)}" data-do="log">≣</button>
     </div>`;
   }).join("");
   reattachLog();
@@ -711,40 +804,40 @@ async function loadApps() {
       : a.blocked ? `<span class="pill bad">blocked</span>`
       : a.status === "running" ? `<span class="pill run">running</span>`
       : a.status === "failed" ? `<span class="pill bad">failed</span>`
-      : `<span class="pill off">${a.status}</span>`;
-    const port = a.port ? ` <span class="muted" style="font-weight:400">· :${a.port}</span>` : "";
-    const note = a.annotation?.purpose ? ` · <span style="color:#aeb4c0">${a.annotation.purpose}</span>` : "";
+      : `<span class="pill off">${esc(a.status)}</span>`;
+    const port = a.port ? ` <span class="muted" style="font-weight:400">· :${esc(a.port)}</span>` : "";
+    const note = a.annotation?.purpose ? ` · <span style="color:#aeb4c0">${esc(a.annotation.purpose)}</span>` : "";
     const drift = a.port_mismatch
-      ? ` · <span style="color:#f0b86e">⚠ serving on :${a.open_port} — declared :${a.port} (another app may hold it)</span>`
+      ? ` · <span style="color:#f0b86e">⚠ serving on :${Number(a.open_port)} — declared :${esc(a.port)} (another app may hold it)</span>`
       : "";
     const sharedNote = !a.port_mismatch && a.port_shared_with?.length
-      ? ` · <span class="muted">port also declared by ${a.port_shared_with.join(", ")}</span>`
+      ? ` · <span class="muted">port also declared by ${esc(a.port_shared_with.join(", "))}</span>`
       : "";
     const sub = a.missing
-      ? `<span style="color:#f08b86">${a.dir} no longer exists — re-scan to repair the path, or ✕ to remove</span>`
+      ? `<span style="color:#f08b86">${esc(a.dir)} no longer exists — re-scan to repair the path, or ✕ to remove</span>`
       : a.blocked
-      ? `<span style="color:#f08b86">${a.dir} is TCC-protected — move it out of Documents/Desktop/Downloads to launch</span>`
-      : `${a.command} · ${a.dir}${a.pid ? ` · pid ${a.pid}` : ""}${a.last_exit != null && a.status !== "running" ? ` · exit ${a.last_exit}` : ""}${note}${drift}${sharedNote}`;
+      ? `<span style="color:#f08b86">${esc(a.dir)} is TCC-protected — move it out of Documents/Desktop/Downloads to launch</span>`
+      : `${esc(a.command)} · ${esc(a.dir)}${a.pid ? ` · pid ${a.pid}` : ""}${a.last_exit != null && a.status !== "running" ? ` · exit ${a.last_exit}` : ""}${note}${drift}${sharedNote}`;
     const open = a.status === "running" && a.open_port
-      ? `<button onclick="window.open('http://localhost:${a.open_port}','_blank')" title="Open http://localhost:${a.open_port}">↗</button>` : "";
+      ? `<button data-open-port="${Number(a.open_port)}" title="Open http://localhost:${Number(a.open_port)}" aria-label="Open ${esc(a.name)} in a browser tab">↗</button>` : "";
     // A missing dir can only fail to start — offer Logs + Remove and nothing else.
     const action = a.blocked || a.missing ? ""
       : a.status === "running"
-        ? `<button class="icon" title="Restart" onclick="appAct('${a.slug}','restart')">↻</button>
-           <button class="icon" title="Stop" onclick="appAct('${a.slug}','stop')">■</button>`
-        : `<button class="icon" title="Start" onclick="appAct('${a.slug}','start')">▶</button>`;
+        ? `<button class="icon" title="Restart" aria-label="Restart ${esc(a.name)}" data-app="${esc(a.slug)}" data-do="restart">↻</button>
+           <button class="icon" title="Stop" aria-label="Stop ${esc(a.name)}" data-app="${esc(a.slug)}" data-do="stop">■</button>`
+        : `<button class="icon" title="Start" aria-label="Start ${esc(a.name)}" data-app="${esc(a.slug)}" data-do="start">▶</button>`;
     const login = a.login ? ' <span class="muted" style="font-weight:400;font-size:11px">· at login</span>' : "";
     const shownPort = a.port_mismatch ? a.open_port : a.port;
     const portTag = shownPort ? ` <span class="muted" style="font-weight:400">· :${shownPort}</span>` : "";
-    return `<div class="row" data-log-key="app:${a.slug}">
+    return `<div class="row" data-log-key="app:${esc(a.slug)}">
       <span class="dot ${dot}"></span>
       <div class="meta">
-        <div class="lbl mono">${a.name}${login}${portTag}</div>
+        <div class="lbl mono">${esc(a.name)}${login}${portTag}</div>
         <div class="sub">${sub}</div>
       </div>
       ${pill}${open}${action}
-      <button class="icon" title="Logs" onclick="showAppLog('${a.slug}')">≣</button>
-      <button class="icon" id="rm-${a.slug}" title="Remove from the dashboard (stops it; your project files are untouched)" onclick="removeApp('${a.slug}')">✕</button>
+      <button class="icon" title="Logs" aria-label="Logs for ${esc(a.name)}" data-app="${esc(a.slug)}" data-do="log">≣</button>
+      <button class="icon" id="rm-${esc(a.slug)}" title="Remove from the dashboard (stops it; your project files are untouched)" aria-label="Remove ${esc(a.name)} from the dashboard" data-app="${esc(a.slug)}" data-do="remove">✕</button>
     </div>`;
   }).join("");
   reattachLog();
@@ -778,7 +871,7 @@ async function scanApps() {
     return;
   }
   $("discover").innerHTML = cands.map(c => {
-    const port = c.port ? ` <span class="muted" style="font-weight:400">· :${c.port}</span>` : "";
+    const port = c.port ? ` <span class="muted" style="font-weight:400">· :${esc(c.port)}</span>` : "";
     const state = c.already ? `<span class="pill off">already added</span>`
       : !c.launchable ? `<span class="pill off">no launch found</span>`
       : c.conflict ? `<span class="pill off">slug in use</span>`
@@ -786,19 +879,19 @@ async function scanApps() {
       : c.blocked ? `<span class="pill bad">blocked</span>`
       : `<span class="pill ok">ready</span>`;
     const sub = !c.launchable
-      ? `<span class="muted">${c.dir} — ${c.reason}</span>`
+      ? `<span class="muted">${esc(c.dir)} — ${esc(c.reason)}</span>`
       : c.conflict
-      ? `<span class="muted">${c.dir} — ${c.reason}</span>`
+      ? `<span class="muted">${esc(c.dir)} — ${esc(c.reason)}</span>`
       : c.moved
-      ? `${c.command} · ${c.dir}<br><span style="color:#74b3ee">was ${c.previous_dir} — updates the existing app's path</span>`
+      ? `${esc(c.command)} · ${esc(c.dir)}<br><span style="color:#74b3ee">was ${esc(c.previous_dir)} — updates the existing app's path</span>`
       : c.blocked
-      ? `<span style="color:#f08b86">${c.command} · ${c.dir} — launchd can't read this folder (TCC); move it to your home root to launch</span>`
-      : `${c.command} · ${c.dir}`;
+      ? `<span style="color:#f08b86">${esc(c.command)} · ${esc(c.dir)} — launchd can't read this folder (TCC); move it to your home root to launch</span>`
+      : `${esc(c.command)} · ${esc(c.dir)}`;
     const inert = c.already || !c.launchable || c.conflict;
     return `<div class="row" ${inert ? 'style="opacity:.55"' : ''}>
-      <input type="checkbox" data-adopt="${c.slug}" ${inert ? "disabled" : ""} ${!inert && !c.blocked ? "checked" : ""}/>
+      <input type="checkbox" data-adopt="${esc(c.slug)}" aria-label="Adopt ${esc(c.name)}" ${inert ? "disabled" : ""} ${!inert && !c.blocked ? "checked" : ""}/>
       <div class="meta">
-        <div class="lbl mono">${c.name}${port}</div>
+        <div class="lbl mono">${esc(c.name)}${port}</div>
         <div class="sub">${sub}</div>
       </div>
       ${state}
@@ -852,9 +945,9 @@ async function loadPorts() {
     // Claimed: a configured app declares this port but nothing is serving it, so the
     // port stays visible (and startable) instead of vanishing when the app stops.
     if (p.kind === "claimed") {
-      const who = p.claimed_by.join(", ");
+      const who = esc(p.claimed_by.join(", "));
       const start = p.claimed_by.length === 1
-        ? `<button class="icon" title="Start ${who}" onclick="appAct('${p.claimed_by[0]}','start')">▶</button>` : "";
+        ? `<button class="icon" title="Start ${who}" aria-label="Start ${who}" data-app="${esc(p.claimed_by[0])}" data-do="start">▶</button>` : "";
       return `<div class="row" style="opacity:.55">
         <span class="dot off"></span>
         <div class="meta">
@@ -865,7 +958,7 @@ async function loadPorts() {
       </div>`;
     }
     const where = p.project || p.cwd || "";
-    const agent = p.agent ? ` <span class="pill run mono">${p.agent}</span>` : "";
+    const agent = p.agent ? ` <span class="pill run mono">${esc(p.agent)}</span>` : "";
     const exposed = p.localhost ? "" : ` <span class="pill bad" title="bound beyond loopback — reachable from the LAN">exposed</span>`;
     const sys = p.system ? ` <span class="pill off">system</span>` : "";
     // Open by NAME, not the IPv4 literal: `localhost` resolves to ::1 or 127.0.0.1, so it
@@ -874,14 +967,14 @@ async function loadPorts() {
     // Host-header allowlists expect — an IP hits their cross-origin warning.
     // System listeners (AirPlay etc.) get no button: they aren't web pages.
     const openBtn = p.system ? ""
-      : `<button onclick="window.open('http://localhost:${p.port}','_blank')" title="Open http://localhost:${p.port}">↗</button>`;
+      : `<button data-open-port="${Number(p.port)}" title="Open http://localhost:${Number(p.port)}" aria-label="Open http://localhost:${Number(p.port)} in a browser tab">↗</button>`;
     return `<div class="row">
       <span class="dot ${p.localhost ? "ok" : "bad"}"></span>
       <div class="meta">
-        <div class="lbl mono">:${p.port} <span class="muted" style="font-weight:400">· ${p.command}</span></div>
-        <div class="sub mono" title="${(p.args || "").replace(/"/g, "&quot;")}">${where || "—"} · pid ${p.pid} · ${p.addresses.join(", ")}</div>
+        <div class="lbl mono">:${p.port} <span class="muted" style="font-weight:400">· ${esc(p.command)}</span></div>
+        <div class="sub mono" title="${esc(p.args || "")}">${esc(where) || "—"} · pid ${p.pid} · ${esc(p.addresses.join(", "))}</div>
       </div>${agent}${exposed}${sys}${openBtn}
-      <button class="icon" id="kill-${p.pid}" title="SIGTERM this process" onclick="killPort(${p.pid})">✕</button>
+      <button class="icon" id="kill-${Number(p.pid)}" title="SIGTERM this process" aria-label="Stop ${esc(p.command)} (pid ${p.pid})" data-kill="${Number(p.pid)}">✕</button>
     </div>`;
   }).join("");
   checkPort();
@@ -908,8 +1001,8 @@ function checkPort() {
   const port = Number(v);
   const hit = portData.find(p => p.port === port && p.kind !== "claimed");
   const claim = portData.find(p => p.port === port && p.kind === "claimed");
-  if (hit) { el.innerHTML = `<span class="pill bad">taken · ${hit.command}</span>`; }
-  else if (claim) { el.innerHTML = `<span class="pill off">free — declared by ${claim.claimed_by.join(", ")}</span>`; }
+  if (hit) { el.innerHTML = `<span class="pill bad">taken · ${esc(hit.command)}</span>`; }
+  else if (claim) { el.innerHTML = `<span class="pill off">free — declared by ${esc(claim.claimed_by.join(", "))}</span>`; }
   else { el.innerHTML = `<span class="pill ok">free</span>`; }
 }
 
@@ -918,8 +1011,6 @@ function checkPort() {
 // interpolated into HTML goes through esc(), and ack targets ride in data-attributes
 // with one delegated listener: inline onclick="ack('${key}')" would let a quote in a
 // process name break out of the JS string.
-const esc = (s) => String(s).replace(/[&<>"']/g,
-  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 // ---- Expandable event rows (shared by the watch tail and the History sheet) ----
 // Clicking a row toggles membership in this Set; because the row TEMPLATE consults it,
@@ -1162,6 +1253,35 @@ $("demoToggle").onchange = () => {
   document.body.classList.toggle("demo", demoMode);
   loadAll();
   if (openLog) refreshLog();
+};
+// Delegated handlers for the four renderers above. The containers are static — only
+// their innerHTML is replaced — so these bind once and never accumulate. This is what
+// lets every action value live in a data-attribute: a process name or plist label with
+// a quote in it can no longer close a JS string and run.
+$("list").onclick = (ev) => {
+  const btn = ev.target.closest("button[data-agent]");
+  if (!btn) return;
+  const label = btn.dataset.agent;
+  if (btn.dataset.do === "log") showLog(label);
+  else act(label, btn.dataset.do);
+};
+$("applist").onclick = (ev) => {
+  const openBtn = ev.target.closest("button[data-open-port]");
+  if (openBtn) { window.open(`http://localhost:${Number(openBtn.dataset.openPort)}`, "_blank"); return; }
+  const btn = ev.target.closest("button[data-app]");
+  if (!btn) return;
+  const slug = btn.dataset.app;
+  if (btn.dataset.do === "log") showAppLog(slug);
+  else if (btn.dataset.do === "remove") removeApp(slug);
+  else appAct(slug, btn.dataset.do);
+};
+$("portlist").onclick = (ev) => {
+  const openBtn = ev.target.closest("button[data-open-port]");
+  if (openBtn) { window.open(`http://localhost:${Number(openBtn.dataset.openPort)}`, "_blank"); return; }
+  const killBtn = ev.target.closest("button[data-kill]");
+  if (killBtn) { killPort(Number(killBtn.dataset.kill)); return; }
+  const startBtn = ev.target.closest("button[data-app]");
+  if (startBtn) appAct(startBtn.dataset.app, startBtn.dataset.do);
 };
 $("showSystem").onchange = loadPorts;
 $("portcheck").oninput = checkPort;
