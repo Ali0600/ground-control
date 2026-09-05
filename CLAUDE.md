@@ -191,6 +191,32 @@ historical entries in `docs/DECISIONS.md` / `docs/learnings.md`, which are recor
   CI runs 3.12 and cannot catch this — dry-run any floor bump on the 3.9 venv. PRs also run the
   user's own [preflight](https://github.com/Ali0600/preflight) action with `python-version: 3.9`.
 
+## Re-recording the demo (`docs/demo.gif`)
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/apps/waymark/stop   # the app whose Start we film
+cd ~/nutrition-website && DEMO_EVENT_MATCH=com.groceryhelper.recipes \
+  node ~/ground-control/scripts/record-demo.mjs               # playwright lives THERE, not here
+cd ~/ground-control && ./scripts/assemble-demo.sh
+```
+- **Playwright is deliberately not a dependency** (it would pull a browser download into a
+  zero-dependency repo); the script resolves it from the *working directory*, so run it from
+  a checkout that has it. It loads `?demo=1` so masking is armed before the first fetch and
+  **refuses to record** if it can't confirm that from the DOM.
+- **One frame per scene, held by an explicit duration** — never repeat frames to fake dwell.
+  The first version captured the same screenshot 8–12× at a flat 10fps, which put each
+  caption on screen for under a second (only 12 of 106 frames were distinct). Holds come
+  from each caption's word count, so timing follows the copy.
+- **Never add an `fps=` filter to the GIF pipeline.** It resamples to a constant rate and
+  silently flattens every hold — the captions become unreadable again and the file still
+  looks fine. `assemble-demo.sh` reads the delays back out of the finished GIF and exits 1
+  if they are uniform or under 1.4s; both outputs are staged and only moved into `docs/`
+  once that check *and* the privacy gate pass.
+- **`DEMO_EVENT_MATCH` picks which event gets expanded on camera.** The card renders a full
+  command line, so "whatever happened most recently" can put unrelated third-party software
+  in a published GIF.
+- The GIF size is ~940K and will not shrink by cutting frames: identical frames compress to
+  nearly nothing, so the bytes are the ten *distinct* full-screen frames.
+
 ## Testing conventions
 - Fixtures only — no live `launchctl`/`lsof`; neutral paths (`/Users/dev`), never real ones.
 - The UI's invisible constraints are pinned as **text assertions over the `PAGE` string** in

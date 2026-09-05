@@ -214,37 +214,33 @@ The pure parsers (`humanize_schedule`, `next_run`, `parse_launchctl_list`, and e
 in `app/ports.py`) are unit-tested against fixtures, so the logic is verified without a
 live machine.
 
-## Experience gained
-- Designed and built a **self-hosted observability + control plane** for macOS scheduled
-  jobs (FastAPI service + zero-dependency web dashboard), surfacing silent failures via
-  last-exit-code monitoring and log tailing.
-- Integrated directly with **`launchd`** internals — plist parsing, `launchctl` state
-  inspection, and job control (`kickstart`/`kill`/`enable`) in the per-user GUI domain.
-- Wrote a **deterministic, fixture-tested core** (schedule humanizing, calendar next-run
-  computation, `launchctl` output parsing) separated from the web/subprocess layer for
-  testability.
-- Packaged the tool to **self-host as a launchd agent**, demonstrating service
-  lifecycle management and localhost-only security scoping.
-- Built a **network-port observability layer** (`lsof`/`ps` field-mode parsing, process →
+## Experience Gained
+- Designed and built a **self-hosted observability and control plane** for a developer
+  machine — FastAPI service plus a zero-dependency web UI — that inventories scheduled
+  jobs, launches dev servers as managed services, attributes every listening port and
+  watches the network, self-hosting as its own agent.
+- Integrated directly with **`launchd` internals** (plist parsing, `launchctl` state
+  inspection, job control in the per-user GUI domain) behind a **deterministic,
+  fixture-tested core** — **178 tests**, no live system calls in the suite, and every new
+  guard proven to fail before it was trusted.
+- Built a **network-port observability layer**: `lsof`/`ps` field-mode parsing, process →
   project attribution via working directory and command-line mining, parent-pid chain
-  walking to link sockets to their managing service) with guarded process control and
-  loopback-vs-LAN bind auditing.
-- Extended the control plane into a **config-driven dev-app launcher**: dynamic launchd
-  plist generation with hermetic `PATH` construction for daemon contexts, full lifecycle
-  management (start/stop/restart, optional start-at-login persistence, per-app environment),
-  and slug-only HTTP surface so commands never cross the wire.
+  walking to link sockets to their managing service, plus loopback-vs-LAN bind auditing
+  and guarded process control.
+- Extended it into a **config-driven service launcher**: dynamic launchd plist generation
+  with hermetic `PATH` construction for daemon contexts, full lifecycle management
+  (start/stop/restart, start-at-login, per-app environment), and a slug-only HTTP surface
+  so commands never cross the wire.
+- Shipped a **background monitoring loop with native alerting and an auditable delivery
+  log** — diffs listener and connection scans against a persisted baseline, classifies
+  remotes (loopback / private / public, failing closed on unparseable input),
+  edge-triggers job-failure alerts while exempting operator-initiated stops, and records
+  every notification as delivered or failed so the alerting channel is itself observable.
+- **Eliminated a 100% false-positive alert class** by diagnosing an ephemeral-port
+  collision — macOS draws outbound local ports from the same 49152–65535 range local
+  services listen on — and replacing a port-equality join with a listener-address
+  reachability check: a structural impossibility rather than a heuristic.
 - Diagnosed and productized a **macOS sandbox (TCC) failure mode**: distinguished
-  EPERM-vs-EACCES semantics, relocated agent-run code out of privacy-protected folders, and
-  encoded the constraint as a first-class "blocked" state in the UI instead of a cryptic error.
-- Cut steady-state overhead with a **TTL-memoized subprocess layer** (one `launchctl` sweep
-  serves three polling endpoints, invalidated on every mutation so actions never read stale).
-- Added a **background network-monitoring loop with native alerting**: async watcher inside
-  the service diffs listener/connection scans against a persisted baseline, classifies
-  remote endpoints (loopback / private / public, failing closed on unparseable input),
-  posts injection-safe macOS notifications from a daemon context, and exposes an
-  acknowledge workflow whose allow-lists only accept server-minted keys.
-- Extended the watcher into **service-health monitoring with an auditable delivery log**:
-  edge-triggered agent-failure alerts (True→False health transitions, exempting
-  operator-initiated stops via a short-TTL expected-exit set, auto-resolving on recovery)
-  plus a persisted **notification history** that records every banner as delivered or
-  failed — making the alerting channel itself observable rather than fire-and-forget.
+  EPERM-vs-EACCES semantics, relocated agent-run code out of privacy-protected folders,
+  and encoded the constraint as a first-class "blocked" state in the UI instead of a
+  cryptic error.

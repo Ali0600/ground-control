@@ -147,3 +147,40 @@ as two, and the artifact looked broken to anyone reading carefully.
 **Takeaway:** format a compound value at the point it becomes text, using the notation
 its spec defines. Anything downstream that pattern-matches the text — a masker, a log
 parser, a linkifier — inherits the ambiguity, and the damage surfaces far from the cause.
+
+## Don't fake duration with repetition — encode it, then read it back
+
+An artifact with a time dimension (a GIF, an animation, a generated video) can express
+"hold this for three seconds" two ways: repeat the frame at a fixed rate, or store one
+frame with an explicit duration. The first is invisible in every file listing and
+unfixable without re-deriving the whole thing.
+
+**Why it came up:** the project's demo GIF put each caption on screen for under a second
+— unreadable. The recorder had been padding dwell time by capturing the *same* screenshot
+8–12 times and playing at a flat 10fps: only 12 of 106 frames were distinct. Switching to
+one frame per scene with a per-frame duration made it readable and made the pacing a
+tunable number instead of an emergent property of two unrelated constants.
+
+Two things that surprised me and are worth carrying: dropping 90% of the frames did **not**
+shrink the file, because identical frames compress to nearly nothing — the bytes were
+always the distinct frames. And the fix is one `fps=` filter away from silently reverting,
+because a re-encoded GIF with flattened delays looks completely normal.
+
+**Takeaway:** when a property is *supposed* to be explicit, store it explicitly rather than
+simulating it with volume — then assert it by reading the property back out of the finished
+artifact, not out of the code that generated it. Anything a later edit can flatten without
+producing an error needs that read-back check.
+
+## Stage the artifact, publish it only after the gate passes
+
+A verification step that runs *after* the file is already in its published location has
+already lost: the broken artifact is on disk, and whether it ships depends on whether
+anyone reads the error.
+
+**Why it came up:** the GIF pipeline wrote straight into `docs/` and *then* checked pacing
+and privacy. Building to a staging path and moving into place only on success turned the
+same checks from advisory into binding — proven by sabotaging the pipeline and confirming
+the previously published GIF was left byte-identical.
+
+**Takeaway:** for any generate-then-verify pipeline, the verification must sit between the
+generation and the destination, not after both.
