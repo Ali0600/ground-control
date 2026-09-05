@@ -26,7 +26,10 @@ from fastapi.testclient import TestClient
 
 from app import apps, launchd, main, netwatch, ports
 
-client = TestClient(main.app)  # NOT a context manager — see the module docstring
+# NOT a context manager — see the module docstring. `base_url` matters: TrustedHost
+# refuses TestClient's default `Host: testserver`, which is correct behaviour, so the
+# client addresses the app the way a browser on this machine does.
+client = TestClient(main.app, base_url="http://127.0.0.1:8787")
 
 LABEL = "com.example.job"
 VENDOR_LABEL = "com.apple.something"

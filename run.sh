@@ -12,4 +12,7 @@ fi
 
 PORT="${PORT:-8787}"
 echo "Ground Control → http://127.0.0.1:${PORT}"
-exec ./.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port "${PORT}" "$@"
+# "$@" comes BEFORE the bind: uvicorn takes the last --host wins, so with the
+# passthrough last, `./run.sh --host 0.0.0.0` would silently expose a dashboard whose
+# whole security model is "loopback only". Extra args still work for everything else.
+exec ./.venv/bin/uvicorn app.main:app "$@" --host 127.0.0.1 --port "${PORT}"
