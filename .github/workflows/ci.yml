@@ -30,7 +30,7 @@ jobs:
         python-version: ['3.9', '3.12']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -39,7 +39,7 @@ jobs:
       # grepping it, and parse-checks the whole page script. Those tests assert node is
       # present instead of skipping — a skip would silently disarm a privacy gate — so
       # install it rather than relying on the runner image happening to ship it.
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
       - run: pip install -r requirements-dev.txt
