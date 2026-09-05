@@ -1,11 +1,19 @@
-# Automated dependency updates. Minor/patch bumps are grouped into one PR per
-# ecosystem to limit noise; majors still arrive as individual PRs for review.
+# SECURITY updates only. `open-pull-requests-limit: 0` is GitHub's documented way to
+# switch off routine VERSION updates while leaving security updates untouched — those
+# come from the repo's alerts and dependency graph, not from this file. So a Dependabot
+# PR here means "there is a CVE", and nothing else.
+#
+# Two traps, both pinned by tests/test_workflows.py: raising the limit turns routine
+# bumps back on, and adding `target-branch` to an entry SILENTLY disables security
+# updates for that ecosystem. The `groups` blocks are kept so that if the limit is ever
+# raised deliberately, the noise is still batched.
 version: 2
 updates:
   - package-ecosystem: pip
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
       pip-minor-patch:
         patterns: ['*']
@@ -26,6 +34,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     groups:
       actions:
         patterns: ['*']

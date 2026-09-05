@@ -534,7 +534,7 @@ def established() -> list[dict]:
 
 def parse_dscacheutil_name(output: str) -> str:
     """Pull the hostname from `dscacheutil -q host -a ip_address <ip>` output.
-    A resolvable IP prints a `name: speedport.ip` line; an unknown IP prints
+    A resolvable IP prints a `name: router.lan` line; an unknown IP prints
     nothing (verified live 2026-08-07). Returns "" when there's no name."""
     for line in output.splitlines():
         if line.startswith("name:"):

@@ -75,15 +75,75 @@ def test_node_is_installed_rather_than_assumed():
 
 
 def test_third_party_actions_are_sha_pinned():
-    """A tag is mutable: whoever controls it controls what runs in CI. First-party
-    `actions/*` are pinned here too, since Dependabot bumps the SHAs anyway."""
-    unpinned = []
-    for job in workflow()["jobs"].values():
-        for step in job.get("steps", []):
-            uses = step.get("uses")
-            if uses and "@" in uses:
-                ref = uses.split("@", 1)[1]
-                if not (len(ref) == 40 and all(c in "0123456789abcdef" for c in ref)):
-                    unpinned.append(uses)
-    assert not unpinned, f"actions pinned to a mutable ref: {unpinned}"
+    """A tag is mutable: whoever controls it controls what runs in CI, with no review in
+    the loop. Checked across EVERY workflow, not just ci.yml — the rule used to be
+    applied to this file alone, and preflight.yml sat on `@main` for a third-party action
+    holding `pull-requests: write` and `security-events: write`.
 
+    First-party `actions/*` are pinned too, since Dependabot bumps the SHAs anyway."""
+    unpinned = []
+    for path in sorted(CI.parent.glob("*.yml")):
+        wf = yaml.safe_load(path.read_text())
+        for job in wf.get("jobs", {}).values():
+            for step in job.get("steps", []):
+                uses = step.get("uses")
+                if uses and "@" in uses:
+                    ref = uses.split("@", 1)[1]
+                    if not (len(ref) == 40 and all(c in "0123456789abcdef" for c in ref)):
+                        unpinned.append(f"{path.name}: {uses}")
+    assert unpinned == [], f"actions pinned to a mutable ref: {unpinned}"
+
+
+def test_every_workflow_declares_least_privilege_permissions():
+    """Without an explicit block a workflow inherits the repository default, which can be
+    write-all. Each workflow states what it needs."""
+    for path in sorted(CI.parent.glob("*.yml")):
+        wf = yaml.safe_load(path.read_text())
+        job_perms = [j.get("permissions") for j in wf.get("jobs", {}).values()]
+        assert wf.get("permissions") or all(job_perms), (
+            f"{path.name} declares no permissions: block"
+        )
+
+
+def test_no_workflow_interpolates_event_data_into_a_run_step():
+    """`${{ github.event.* }}` inside `run:` is a shell injection: the value is pasted
+    into the script before bash sees it. Assign it to an `env:` var and quote it."""
+    import re
+
+    offenders = []
+    for path in sorted(CI.parent.glob("*.yml")):
+        wf = yaml.safe_load(path.read_text())
+        for job in wf.get("jobs", {}).values():
+            for step in job.get("steps", []):
+                body = step.get("run")
+                if body and re.search(r"\$\{\{\s*github\.event\.", body):
+                    offenders.append(f"{path.name}: {step.get('name') or body[:40]}")
+    assert not offenders, f"event data interpolated into run: {offenders}"
+
+
+# --------------------------------------------------------------------------- #
+# Dependabot
+# --------------------------------------------------------------------------- #
+DEPENDABOT = CI.parent.parent / "dependabot.yml"
+
+
+def test_dependabot_is_security_updates_only():
+    """A deliberate policy: routine version bumps are off, so a Dependabot PR means a CVE
+    and nothing else. `open-pull-requests-limit: 0` is GitHub's documented switch —
+    security updates come from the repo's alerts, not from this file, so they survive."""
+    cfg = yaml.safe_load(DEPENDABOT.read_text())
+    for entry in cfg["updates"]:
+        assert entry.get("open-pull-requests-limit") == 0, (
+            f"{entry['package-ecosystem']}: routine version bumps are on — "
+            "set open-pull-requests-limit: 0"
+        )
+
+
+def test_no_dependabot_entry_sets_target_branch():
+    """`target-branch` SILENTLY disables security updates for that ecosystem — the one
+    change here that turns the whole thing off while still looking configured."""
+    cfg = yaml.safe_load(DEPENDABOT.read_text())
+    for entry in cfg["updates"]:
+        assert "target-branch" not in entry, (
+            f"{entry['package-ecosystem']}: target-branch disables security updates"
+        )

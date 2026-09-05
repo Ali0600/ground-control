@@ -340,16 +340,16 @@ def test_scrub_actually_masks_what_it_claims():
     assert node, "node is required to verify demo-mode masking"
 
     payload = {
-        "rhost": "192.168.2.202",
-        "hostname": "Alis-iPhone.local",
-        "summary": "device Alis-iPhone.local (192.168.2.202) connected to :8081",
+        "rhost": "10.0.1.37",
+        "hostname": "lab-phone.local",
+        "summary": "device lab-phone.local (10.0.1.37) connected to :8081",
         "addresses": ["127.0.0.1", "fe80::abc%en0", "*"],
-        "args": "/Users/ah/projects/app/.venv/bin/python app.py --port 8000",
+        "args": "/Users/dev/projects/app/.venv/bin/python app.py --port 8000",
         "ts": "2026-08-07T13:10:15+00:00",
         "label": "com.groceryhelper.recipes",
         "port": 8081,
-        "again": "192.168.2.202",
-        "other": "10.0.1.37",
+        "again": "10.0.1.37",
+        "other": "10.0.1.99",
     }
     prog = _scrub_js() + f"""
 const out = scrub({_json.dumps(payload)});
@@ -367,7 +367,7 @@ console.log(JSON.stringify(out));
     assert out["other"] != out["rhost"], "different devices must not collapse into one"
     assert out["other"].startswith("192.0.2.")
     assert out["hostname"].startswith("device-") and out["hostname"].endswith(".local")
-    assert "192.168.2.202" not in out["summary"] and "Alis-iPhone" not in out["summary"]
+    assert "10.0.1.37" not in out["summary"] and "lab-phone" not in out["summary"]
     assert "192.0.2.1" in out["summary"]
     assert out["addresses"][0] == "127.0.0.1", "loopback stays real (else every row reads exposed)"
     assert out["addresses"][1].startswith("2001:db8::")   # RFC 3849

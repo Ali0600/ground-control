@@ -344,10 +344,10 @@ def test_agent_event_data_carries_exit_and_schedule():
 
 def test_hostname_is_folded_into_a_conn_summary_when_present():
     state = seeded()
-    observe(state, [], [C(rhost="10.0.1.9", hostname="Alis-iPhone")], T1)
+    observe(state, [], [C(rhost="10.0.1.9", hostname="lab-phone")], T1)
     ev = state["events"][0]
-    assert "Alis-iPhone (10.0.1.9)" in ev["summary"]
-    assert ev["data"]["hostname"] == "Alis-iPhone"
+    assert "lab-phone (10.0.1.9)" in ev["summary"]
+    assert ev["data"]["hostname"] == "lab-phone"
     # Absent hostname → summary unchanged (old rows / unresolved IPs).
     state2 = seeded()
     observe(state2, [], [C(rhost="10.0.1.9")], T1)
@@ -356,8 +356,8 @@ def test_hostname_is_folded_into_a_conn_summary_when_present():
 
 
 def test_parse_dscacheutil_name():
-    out = "name: speedport.ip\nalias: 1.2.168.192.in-addr.arpa\nip_address: 192.168.2.1\n"
-    assert parse_dscacheutil_name(out) == "speedport.ip"
+    out = "name: router.lan\nalias: 1.1.0.10.in-addr.arpa\nip_address: 10.0.1.1\n"
+    assert parse_dscacheutil_name(out) == "router.lan"
     assert parse_dscacheutil_name("") == ""  # unknown IP prints nothing (verified live)
 
 
@@ -549,14 +549,14 @@ def test_conn_entries_store_the_fields_the_roster_needs():
     """Stored, not re-parsed from the key: an IPv6 remote is full of colons, so
     splitting `conn:<host>:<port>` is a trap."""
     state = seeded()
-    observe(state, [], [C(rhost="fe80::abc", lport=8081, hostname="phone.local")], T1)
+    observe(state, [], [C(rhost="fe80::abc", lport=8081, hostname="lab-phone.local")], T1)
     entry = state["known"]["conn:fe80::abc:8081"]
     assert entry["rhost"] == "fe80::abc"
     assert entry["lport"] == 8081
-    assert entry["hostname"] == "phone.local"
+    assert entry["hostname"] == "lab-phone.local"
     # A later lookup that fails must NOT erase a name that resolved once.
     observe(state, [], [C(rhost="fe80::abc", lport=8081, hostname="")], T1)
-    assert state["known"]["conn:fe80::abc:8081"]["hostname"] == "phone.local"
+    assert state["known"]["conn:fe80::abc:8081"]["hostname"] == "lab-phone.local"
 
 
 def test_legacy_known_entries_are_backfilled_in_place():

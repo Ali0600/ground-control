@@ -48,6 +48,11 @@ jobs:
       - run: ruff check .
       # A ratchet, set just under the measured floor: raise it as coverage climbs,
       # never lower it to make a PR pass.
+      # Named separately from the suite below so a privacy failure is legible in the
+      # checks list rather than buried in a pytest summary. (It also runs inside the
+      # suite; this step is about where the failure SHOWS.)
+      - name: No personal data in a public repo
+        run: pytest -q tests/test_privacy.py
       - run: pytest -q --cov=app --cov-report=term-missing --cov-fail-under=86
 
   # The name below is the branch ruleset's REQUIRED CHECK, so it must stay stable no

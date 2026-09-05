@@ -191,12 +191,31 @@ historical entries in `docs/DECISIONS.md` / `docs/learnings.md`, which are recor
   CI runs 3.12 and cannot catch this — dry-run any floor bump on the 3.9 venv. PRs also run the
   user's own [preflight](https://github.com/Ali0600/preflight) action with `python-version: 3.9`.
 
+## Privacy — this repo is public
+
+Two gates, because neither can do the other's job:
+
+- **`pytest tests/test_privacy.py`** runs in CI, where nothing is known about this
+  machine, so it checks STRUCTURE: an unrecognised `/Users/<name>`, a `.local` device
+  name, a private address outside a closed fixture allowlist. Adding to an allowlist is
+  meant to be a deliberate act — that is the moment to ask "is this a real address?".
+- **`./scripts/privacy-check.sh`** is the half only this machine can run. It derives the
+  needles at run time (`$HOME`, the LAN IP, `LocalHostName`, `ComputerName`, the git
+  author name and email, the LAN prefix) and greps every tracked file. **Run it before
+  pushing.** Committing those values so CI could check them would be the leak itself.
+
+Fixture conventions: `/Users/dev` (and `/Users/demo` for masked output), `10.0.1.x`
+addresses, `lab-phone.local`, `router.lan`. The repo carried a phone named after the
+author, their real subnet and their router's model until 2026-09-05 — the demo gate in
+`assemble-demo.sh` had been guarding published GIF frames for the same categories all
+along, and simply never looked at the source.
+
 ## Re-recording the demo (`docs/demo.gif`)
 ```bash
 curl -s -X POST http://127.0.0.1:8787/api/apps/waymark/stop   # the app whose Start we film
-cd ~/nutrition-website && DEMO_EVENT_MATCH=com.groceryhelper.recipes \
-  node ~/ground-control/scripts/record-demo.mjs               # playwright lives THERE, not here
-cd ~/ground-control && ./scripts/assemble-demo.sh
+cd <any checkout with playwright installed> && DEMO_EVENT_MATCH=<an event to expand> \
+  node <this repo>/scripts/record-demo.mjs                    # playwright lives THERE, not here
+cd <this repo> && ./scripts/assemble-demo.sh
 ```
 - **Playwright is deliberately not a dependency** (it would pull a browser download into a
   zero-dependency repo); the script resolves it from the *working directory*, so run it from
