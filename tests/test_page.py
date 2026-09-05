@@ -302,8 +302,11 @@ def test_demo_toggle_exists_and_rerenders_everything():
     handler = js.split('$("demoToggle").onchange', 1)[1].split("};", 1)[0]
     assert "loadAll()" in handler          # covers the list, ports, watch AND open sheet
     assert "if (openLog) refreshLog()" in handler  # an open log panel too
-    # never persisted: forgetting it's on would read as a broken dashboard
-    assert "demoMode" not in js.split("localStorage", 1)[0] or "localStorage" not in js
+    # Never persisted: forgetting demo mode is on would read as a broken dashboard.
+    # Stated as a flat prohibition — the old form ("demoMode" absent before the first
+    # localStorage occurrence, OR no localStorage at all) was satisfied by its second
+    # clause and could not fail while the page had no storage calls at all.
+    assert "localStorage" not in js and "sessionStorage" not in js
 
 
 def _scrub_js() -> str:
@@ -435,3 +438,19 @@ def test_the_product_name_is_consistent_across_every_surface():
     src = inspect.getsource(main)
     assert "post_notification(APP_NAME" in src, "banners must use the constant"
     assert "launchd dashboard" not in src, "stale product name left in main.py"
+
+
+def test_the_whole_page_script_parses():
+    """Only the ~50-line scrub block is ever handed to a JS engine (by the two tests
+    above). The other ~750 lines are checked as TEXT, so a stray brace anywhere in them
+    ships a completely blank dashboard with a green suite — the page is one string in a
+    Python file, invisible to ruff and to any JS tooling.
+
+    `node --check` parses without executing, so `document`/`location` are irrelevant."""
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    assert node, "node is required to parse-check the page script"
+    r = subprocess.run([node, "--check"], input=script(), capture_output=True, text=True)
+    assert r.returncode == 0, f"the page script does not parse:\n{r.stderr}"

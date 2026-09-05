@@ -3,7 +3,6 @@
 import json
 
 from app.netwatch import (
-    _TRANSITION_KINDS,
     EVENT_RING,
     NOTIFY_RING,
     RUN_LEDGER_CAP,
@@ -283,6 +282,13 @@ def test_ack_command_requires_an_active_match():
     assert "acked_commands" not in state
 
 
+def test_the_ring_caps_are_the_documented_sizes():
+    """The cap tests below prove the caps are ENFORCED, but they read the value from
+    the module — they would pass just as happily against EVENT_RING = 5. One literal
+    each, so a silent retune is a failure rather than a smaller ring."""
+    assert (EVENT_RING, NOTIFY_RING, RUN_LEDGER_CAP) == (200, 200, 50)
+
+
 def test_event_ring_is_capped():
     state = seeded()
     listeners = [L(command=f"app{i}", port=10000 + i) for i in range(EVENT_RING + 50)]
@@ -400,8 +406,13 @@ def test_agent_recovery_is_log_only_and_clears_the_alert():
 def test_agent_failure_ignores_a_prior_ack():
     """agent_failed is a TRANSITION, not a first-sighting: an ack resolves one episode,
     the next failure is a new fact (a permanent per-agent mute would re-hide the recipes
-    job). Contrast a `new_listener` ack, which is 'I know, hush forever'."""
-    assert "agent_failed" in _TRANSITION_KINDS and "now_exposed" in _TRANSITION_KINDS
+    job). Contrast a `new_listener` ack, which is 'I know, hush forever'.
+
+    This pins one member of `_TRANSITION_KINDS`; `test_acked_key_still_alerts_on_
+    exposure_flip` pins the other. Both do it by BEHAVIOUR — an assertion that the set
+    contains the two names it is written with is satisfied by construction and cannot
+    tell a working rule from a stale constant. (The constant is currently consulted by
+    nothing in app/; the branches simply never read `acked`.)"""
     state = agents_seeded([A(healthy=True)])
     observe_agents(state, [A(healthy=False, last_exit=1)], set(), T1)
     assert ack(state, "agent:com.groceryhelper.recipes")["ok"] is True
@@ -689,3 +700,4 @@ def test_conn_data_keeps_the_local_address():
     state = seeded()
     events = observe(state, [], [C()], T1)
     assert events[0]["data"]["lhost"] == "10.0.1.5"
+

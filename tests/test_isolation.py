@@ -13,7 +13,8 @@ import ast
 import inspect
 from pathlib import Path
 
-from app import annotations, apps, discover, netwatch
+import app as app_pkg
+from app import netwatch
 from tests.conftest import PATCHED_MODULES, READ_ONLY, REDIRECTED
 
 REPO = Path(__file__).resolve().parent.parent
@@ -73,15 +74,30 @@ def test_no_function_default_still_points_at_a_real_path():
     assert not offenders, "unredirected path defaults: " + "; ".join(offenders)
 
 
+def _app_modules():
+    """Every module in the `app` package — derived by walking the package directory,
+    NOT a hand-written list. The hand list is what forgets: the first version of this
+    test named four modules and missed `launchd.AGENT_DIRS`, which points at the real
+    ~/Library/LaunchAgents. A driver that copes with whatever it finds beats a list
+    whose newest member is always the one left off."""
+    import importlib
+
+    mods = []
+    for path in sorted(Path(app_pkg.__file__).parent.glob("*.py")):
+        if path.stem == "__init__":
+            continue
+        mods.append(importlib.import_module(f"app.{path.stem}"))
+    return mods
+
+
 def test_every_path_constant_is_classified():
-    """Derived from the SOURCE, not from a hand-kept list: a new module-level
-    `X = Path(...)` must be either redirected (a write surface) or named in READ_ONLY
-    with a reason. The hand list is the thing that forgets — its newest member is
-    always the one left off, so the membership is computed and compared WHOLE, which
-    fails in both directions: an unclassified constant AND a stale entry."""
+    """A new module-level `X = Path(...)` (or a list of them) must be either redirected
+    — a surface a test can reach — or named in READ_ONLY with a reason. Membership is
+    computed from the source and compared WHOLE, so this fails in both directions: an
+    unclassified constant AND a stale READ_ONLY entry."""
     covered = {(mod.__name__, attr) for mod, attr in REDIRECTED}
     found = set()
-    for mod in (annotations, apps, netwatch, discover):
+    for mod in _app_modules():
         source = Path(mod.__file__).read_text()
         for node in ast.parse(source).body:  # module scope only
             if not isinstance(node, ast.Assign):
@@ -100,3 +116,12 @@ def test_every_path_constant_is_classified():
     )
     stale = READ_ONLY - found
     assert not stale, f"READ_ONLY names constants that no longer exist: {sorted(stale)}"
+
+
+def test_agent_discovery_cannot_see_the_real_launchagents():
+    """`discover_plists()` with no argument must find nothing: the machine's own jobs
+    are not test fixtures, and a route test that forgot to stub would otherwise render
+    the user's real agent list."""
+    from app import launchd
+
+    assert launchd.discover_plists() == []

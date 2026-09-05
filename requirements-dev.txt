@@ -1,5 +1,6 @@
 -r requirements.txt
 # pytest 9+ requires Python >=3.10; the local venv is 3.9 (see requirements.txt).
 pytest>=8.0
-httpx>=0.28.1
+httpx>=0.28.1  # FastAPI TestClient (tests/test_routes.py)
+pytest-cov>=5.0
 ruff>=0.15.20

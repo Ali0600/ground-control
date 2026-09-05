@@ -17,18 +17,35 @@ concurrency:
 
 jobs:
   test:
-    name: Lint + test
+    name: Lint + test (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is the LOWEST we run — run.sh builds the dev venv from macOS's system
+        # python3. It was linted for (ruff target-version = py39) but never executed,
+        # so 3.10+ syntax that ruff's selected rules don't reject could merge green and
+        # break the dev machine. 3.12 is what the deployed agent runs.
+        python-version: ['3.9', '3.12']
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: requirements-dev.txt
+      # tests/test_page.py EXECUTES the demo-mode scrub block under node rather than
+      # grepping it, and parse-checks the whole page script. Those tests assert node is
+      # present instead of skipping — a skip would silently disarm a privacy gate — so
+      # install it rather than relying on the runner image happening to ship it.
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
       - run: pip install -r requirements-dev.txt
       # The suite is fixture-only (pure parsers, no live launchctl/lsof), so it
       # runs fine on Linux even though the tool itself targets macOS.
       - run: ruff check .
-      - run: pytest -q
+      # A ratchet, set just under the measured floor: raise it as coverage climbs,
+      # never lower it to make a PR pass.
+      - run: pytest -q --cov=app --cov-report=term-missing --cov-fail-under=86

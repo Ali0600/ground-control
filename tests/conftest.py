@@ -28,11 +28,12 @@ from pathlib import Path
 
 import pytest
 
-from app import annotations, apps, discover, netwatch
+from app import annotations, apps, discover, launchd, netwatch
 
-# (module, attribute) for every module-scope path constant. `test_every_path_constant_
-# is_redirected` re-derives this list from the source, so a constant added later fails
-# the suite instead of quietly writing to a real file.
+# (module, attribute) for every module-scope path constant. A value may be a single
+# Path or a LIST of them (launchd.AGENT_DIRS); both are redirected into the sandbox.
+# `test_every_path_constant_is_classified` re-derives this from the source, so a
+# constant added later fails the suite instead of quietly reaching a real file.
 REDIRECTED = (
     (netwatch, "STATE_PATH"),
     (netwatch, "ARCHIVE_PATH"),
@@ -40,12 +41,16 @@ REDIRECTED = (
     (apps, "LAUNCH_AGENTS_DIR"),
     (apps, "LOG_DIR"),
     (annotations, "LABELS_PATH"),
+    # The real ~/Library/LaunchAgents and /Library/LaunchAgents. Redirected rather than
+    # merely allowed, so `discover_plists()` sees an empty dir instead of the machine's
+    # actual jobs — that also gives route tests somewhere to drop fixture plists.
+    (launchd, "AGENT_DIRS"),
 )
 
 # Modules whose function defaults may have captured one of the paths above. `discover`
 # is included because it imports CONFIG_PATH from apps and defaults
 # `adopt_apps(config=…)` to it — an importer captures the value just as its owner does.
-PATCHED_MODULES = (annotations, apps, netwatch, discover)
+PATCHED_MODULES = (annotations, apps, netwatch, discover, launchd)
 
 # Path constants that are deliberately NOT redirected, each with the reason. These are
 # READ surfaces: the risk is a slow, machine-coupled scan, not a destroyed file. Naming
@@ -89,8 +94,16 @@ def _redirect_state(tmp_path_factory):
         target = sandbox / mod.__name__.rsplit(".", 1)[-1] / attr.lower()
         target.parent.mkdir(parents=True, exist_ok=True)
         saved_attrs.append((mod, attr, original))
-        mapping[Path(original)] = target
-        setattr(mod, attr, target)
+        if isinstance(original, list):
+            # A search path (AGENT_DIRS): one real sandbox dir replaces every entry, and
+            # each original still maps to it so a captured default is caught too.
+            target.mkdir(parents=True, exist_ok=True)
+            for entry in original:
+                mapping[Path(entry)] = target
+            setattr(mod, attr, [target])
+        else:
+            mapping[Path(original)] = target
+            setattr(mod, attr, target)
 
     undo: list = []
     for mod in PATCHED_MODULES:
