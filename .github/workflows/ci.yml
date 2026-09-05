@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   test:
-    name: Lint + test (py${{ matrix.python-version }})
+    name: py${{ matrix.python-version }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -49,3 +49,24 @@ jobs:
       # A ratchet, set just under the measured floor: raise it as coverage climbs,
       # never lower it to make a PR pass.
       - run: pytest -q --cov=app --cov-report=term-missing --cov-fail-under=86
+
+  # The name below is the branch ruleset's REQUIRED CHECK, so it must stay stable no
+  # matter how the matrix above changes. Adding the 3.9/3.12 matrix renamed the only
+  # job to "Lint + test (py3.9)" / "(py3.12)", so the required "Lint + test" became a
+  # check that could never report again — every PR unmergeable, with nothing red to
+  # explain why. An aggregate gate decouples the required name from the matrix shape.
+  gate:
+    name: Lint + test
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # `always()` matters: without it a failed matrix leaves this job SKIPPED, and a
+    # skipped required check does not block a merge. Fail closed, and say why.
+    if: always()
+    steps:
+      - name: Every matrix job must have succeeded
+        env:
+          RESULT: ${{ needs.test.result }}
+        run: |
+          echo "matrix result: $RESULT"
+          test "$RESULT" = "success"

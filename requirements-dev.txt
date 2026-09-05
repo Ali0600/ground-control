@@ -3,4 +3,7 @@
 pytest>=8.0
 httpx>=0.28.1  # FastAPI TestClient (tests/test_routes.py)
 pytest-cov>=5.0
+# tests/test_workflows.py parses ci.yml. Declared, not optional: an
+# importorskip on a missing dep would silently disarm every workflow guard.
+PyYAML>=6.0
 ruff>=0.15.20
