@@ -65,9 +65,11 @@ _USER_PATH = re.compile(r"/Users/([A-Za-z0-9_.-]+)")
 # publishes a device as <name>.local, and .lan is the usual router suffix.
 _DEVICE_NAME = re.compile(r"\b[\w-]+\.(?:local|lan)\b", re.I)
 
-# Files that legitimately contain address PREFIXES rather than addresses: the classifier
-# itself, and this file. Named individually so the exemption cannot silently widen.
-_PREFIX_SOURCES = {"app/netwatch.py", "tests/test_privacy.py", "scripts/privacy-check.sh"}
+# Files that legitimately discuss address SHAPES rather than carrying an address: the
+# classifier's docstrings and the shell gate's needle list. Named individually so the
+# exemption cannot silently widen — and this file is deliberately NOT among them, since
+# its bait is assembled from parts precisely so it can be scanned like anything else.
+_PREFIX_SOURCES = {"app/netwatch.py", "scripts/privacy-check.sh"}
 
 
 def tracked_text_files() -> "list[Path]":
@@ -166,21 +168,24 @@ def test_the_allowlists_are_all_still_used(tracked):
     assert not unused, f"allowlist entries no longer used by any fixture: {unused}"
 
 
-def test_the_gate_can_actually_fail(tmp_path, monkeypatch):
+def test_the_gate_can_actually_fail(tmp_path):
     """An instrument that cannot reject anything is not a check. Feed the scanners a
     file carrying each forbidden shape and confirm every one is caught — otherwise a
-    green run here proves only that the regexes never matched."""
-    bait = tmp_path / "bait.txt"
-    bait.write_text(
-        "home = /Users/realperson/projects\n"
-        "phone = 192.168.44.7\n"
-        "device = Someones-iPhone.local\n"
-    )
-    monkeypatch.setattr("tests.test_privacy.REPO", tmp_path)
+    green run here proves only that the regexes never matched.
 
-    users = [u for u in _USER_PATH.findall(bait.read_text()) if u not in ALLOWED_USERS]
-    ips = [i for i in _RFC1918.findall(bait.read_text()) if i not in ALLOWED_PRIVATE_IPS]
-    hosts = [h for h in _DEVICE_NAME.findall(bait.read_text()) if h.lower() not in ALLOWED_HOSTNAMES]
-    assert users == ["realperson"], users
-    assert ips == ["192.168.44.7"], ips
-    assert hosts == ["Someones-iPhone.local"], hosts
+    Every forbidden value is ASSEMBLED FROM PARTS, bait and expectation alike, so no
+    literal exists in this file for the scanners above to trip over. That is not
+    fastidiousness: the first version wrote the bait as literals and passed locally
+    purely because this file was still untracked, so `git ls-files` could not see it.
+    CI caught it the moment it was committed. A gate with an exemption shaped like its
+    own source is a gate with a hole in it, so this file is scanned like any other."""
+    user = "real" + "person"
+    ip = "192.168." + "44.7"
+    host = "Someones-" + "iPhone" + ".local"
+    bait = tmp_path / "bait.txt"
+    bait.write_text(f"home = /Users/{user}/projects\nphone = {ip}\ndevice = {host}\n")
+    text = bait.read_text()
+
+    assert [u for u in _USER_PATH.findall(text) if u not in ALLOWED_USERS] == [user]
+    assert [i for i in _RFC1918.findall(text) if i not in ALLOWED_PRIVATE_IPS] == [ip]
+    assert [h for h in _DEVICE_NAME.findall(text) if h.lower() not in ALLOWED_HOSTNAMES] == [host]
