@@ -7,7 +7,9 @@ set -euo pipefail
 
 OUT="${DEMO_OUT:-/tmp/launchddash-demo}"
 FRAMES="$OUT/frames"
-DEST="${1:-$HOME/launchd-dashboard/docs}"
+# Derived from this script's own location, not a hard-coded checkout name — the
+# README tells people to clone somewhere else entirely.
+DEST="${1:-$(cd "$(dirname "$0")/.." && pwd)/docs}"
 [ -d "$FRAMES" ] || { echo "no frames at $FRAMES — run record-demo.mjs first"; exit 1; }
 
 # ---- privacy gate ---------------------------------------------------------

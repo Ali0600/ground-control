@@ -6,7 +6,8 @@
  * Playwright is NOT a dependency of this repo (it would pull a browser download into a
  * zero-dependency project). Run it from a checkout that already has it:
  *
- *     cd ~/nutrition-website && node ~/launchd-dashboard/scripts/record-demo.mjs
+ *     cd <any checkout with playwright installed>
+ *     node <path to this repo>/scripts/record-demo.mjs
  *
  * The dashboard must be running on :8787. The page is loaded with `?demo=1`, which arms
  * masking BEFORE the first fetch — so no captured frame can contain a real IP, device
@@ -28,8 +29,8 @@ try {
   ({ chromium } = require("playwright"));
 } catch {
   console.error(`playwright not resolvable from ${process.cwd()}\n` +
-    "Run this from a checkout that has it, e.g.:\n" +
-    "  cd ~/nutrition-website && node ~/launchd-dashboard/scripts/record-demo.mjs");
+    "Run this from a directory that has playwright installed:\n" +
+    `  cd <a checkout with playwright> && node ${process.argv[1]}`);
   process.exit(1);
 }
 

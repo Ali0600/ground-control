@@ -25,13 +25,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - id: preflight
-        uses: Ali0600/preflight/packages/action@main
+        uses: Ali0600/preflight/packages/action@abce9bea9e1adbf2633a46f230c3cbeed379f901 # v1
         with:
           python-version: '3.9'
       - name: Upload findings to the Security tab
         if: always() && hashFiles('preflight.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@5ba2889ada762081db2c4f32a729827dce632c7b # v3
         with:
           sarif_file: preflight.sarif
