@@ -449,138 +449,195 @@ PAGE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Ground Control</title>
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    color-scheme: dark;
+    /* One palette, named once. Every colour in the page — including the ones the renderers
+       write inline — resolves through these, so the whole look is 20 lines rather than ~40
+       literals scattered across 850. A light theme is a second block of these, nothing else. */
+    --bg: #0f1115; --panel: #171a21; --list: #14171d; --inset: #0c0e12; --line: #272b34;
+    --text: #e7e9ee; --text-2: #d7dae1; --text-3: #aeb4c0; --muted: #8b909c;
+    --btn: #1d212a; --btn-hover: #242935; --btn-line: #333845;
+    --ok: #36c08f; --run: #4a9be8; --bad: #e2554f; --off: #6b7280; --warn: #f0b86e;
+    --ok-ink: #5fd2a0; --run-ink: #74b3ee; --bad-ink: #f08b86; --off-ink: #9aa0ac;
+    --ok-soft: #15311f; --run-soft: #122436; --bad-soft: #3a1714; --off-soft: #23262e;
+    --warn-soft: #33270f;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; background: #0f1115; color: #e7e9ee;
+  /* Tabs switch panels with the `hidden` attribute, and the UA rule behind it loses to ANY
+     display: declaration — .row and .cards both carry one. Without this guard a tab switch
+     would set the attribute and change nothing on screen. */
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--text);
          font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-  .wrap { max-width: 880px; margin: 0 auto; padding: 24px 20px 64px; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 18px 20px 64px; }
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .muted { color: #8b909c; }
-  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .muted { color: var(--muted); }
+  /* The shell stays put while a long list scrolls under it: title, the two global controls,
+     and the tab bar with its live counts. */
+  .topbar { position: sticky; top: 0; z-index: 10; background: var(--bg);
+            border-bottom: 0.5px solid var(--line); }
+  .topbar .bar { max-width: 880px; margin: 0 auto; padding: 14px 20px 0; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+           margin-bottom: 10px; }
   header .title { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 17px; }
+  .ctl { display: flex; align-items: center; gap: 10px; }
+  .check { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+         color: var(--muted); padding: 8px 12px 9px; font-size: 13px; display: flex;
+         align-items: center; gap: 7px; white-space: nowrap; }
+  .tab:hover { background: none; color: var(--text); }
+  .tab:active { transform: none; }
+  .tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--run-ink); }
+  .tab:focus-visible { outline: 2px solid var(--run-ink); outline-offset: -4px; border-radius: 6px; }
+  .tab .count { font-size: 11px; padding: 1px 7px; border-radius: 999px;
+                background: var(--panel); color: var(--muted); }
+  .tab .count:empty { display: none; }
+  .tab .count.bad { background: var(--bad-soft); color: var(--bad-ink); }
+  .tab .count.warn { background: var(--warn-soft); color: var(--warn); }
+  .tab .count.run { background: var(--run-soft); color: var(--run-ink); }
+  /* One header row per panel: the section name on the left, that panel's own controls on
+     the right — the controls used to sit in a shared header that had run out of room. */
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+             min-height: 30px; margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+  .toolbar .h { text-transform: uppercase; letter-spacing: .04em; }
   .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-  .ok { background: #36c08f; } .run { background: #4a9be8; } .bad { background: #e2554f; }
-  .off { background: #6b7280; } .warn { background: #f0b86e; }
-  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 22px; }
-  .card { background: #171a21; border-radius: 10px; padding: 14px 16px; }
-  .card .k { font-size: 12px; color: #8b909c; } .card .v { font-size: 24px; font-weight: 600; margin-top: 2px; }
-  .list { background: #14171d; border: 0.5px solid #272b34; border-radius: 12px; overflow: hidden; }
-  .row { display: flex; align-items: center; gap: 12px; padding: 13px 16px; border-top: 0.5px solid #272b34; }
+  .ok { background: var(--ok); } .run { background: var(--run); } .bad { background: var(--bad); }
+  .off { background: var(--off); } .warn { background: var(--warn); }
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .card { background: var(--panel); border-radius: 10px; padding: 14px 16px; }
+  .card .k { font-size: 12px; color: var(--muted); }
+  .card .v { font-size: 24px; font-weight: 600; margin-top: 2px; }
+  .list { background: var(--list); border: 0.5px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-top: 0.5px solid var(--line); }
   .row:first-child { border-top: none; }
   .row .meta { flex: 1; min-width: 0; }
   .row .lbl { font-size: 13px; font-weight: 600; }
-  .row .sub { font-size: 12px; color: #8b909c; margin-top: 2px; }
+  .row .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
   .pill { font-size: 11px; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
-  .pill.ok { background: #15311f; color: #5fd2a0; } .pill.bad { background: #3a1714; color: #f08b86; }
-  .pill.off { background: #23262e; color: #9aa0ac; } .pill.run { background: #122436; color: #74b3ee; }
-  .pill.warn { background: #33270f; color: #f0b86e; }
-  button { background: #1d212a; color: #d7dae1; border: 0.5px solid #333845; border-radius: 8px;
-           padding: 6px 10px; font-size: 13px; cursor: pointer; }
-  button:hover { background: #242935; } button:active { transform: scale(.97); }
+  .pill.ok { background: var(--ok-soft); color: var(--ok-ink); }
+  .pill.bad { background: var(--bad-soft); color: var(--bad-ink); }
+  .pill.off { background: var(--off-soft); color: var(--off-ink); }
+  .pill.run { background: var(--run-soft); color: var(--run-ink); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  button { background: var(--btn); color: var(--text-2); border: 0.5px solid var(--btn-line);
+           border-radius: 8px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
+  button:hover { background: var(--btn-hover); } button:active { transform: scale(.97); }
   button.icon { width: 34px; padding: 6px 0; }
-  .section { margin: 22px 0 8px; font-size: 12px; color: #8b909c; text-transform: uppercase; letter-spacing: .04em; }
+  #portcheck { width: 90px; background: var(--btn); border: 0.5px solid var(--btn-line);
+               border-radius: 8px; color: var(--text-2); padding: 5px 9px; font-size: 12px; }
+  .section { margin: 18px 0 8px; font-size: 12px; color: var(--muted); text-transform: uppercase;
+             letter-spacing: .04em; }
   /* The panel is MOVED under whichever row was clicked (see openLogPanel), so it needs
      to sit inset when it lands between rows inside a .list. */
-  .logwrap { margin: 8px 12px; background: #0c0e12; border: 0.5px solid #272b34; border-radius: 10px;
-             display: none; }
+  .logwrap { margin: 8px 12px; background: var(--inset); border: 0.5px solid var(--line);
+             border-radius: 10px; display: none; }
   .logwrap.open { display: block; }
-  .loghead { display: flex; justify-content: space-between; padding: 9px 14px; border-bottom: 0.5px solid #272b34;
-             font-size: 12px; color: #8b909c; }
-  pre.log { margin: 0; padding: 12px 14px; font-size: 12px; line-height: 1.7; color: #aeb4c0;
+  .loghead { display: flex; justify-content: space-between; padding: 9px 14px;
+             border-bottom: 0.5px solid var(--line); font-size: 12px; color: var(--muted); }
+  pre.log { margin: 0; padding: 12px 14px; font-size: 12px; line-height: 1.7; color: var(--text-3);
             max-height: 320px; overflow: auto; white-space: pre-wrap; }
-  .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: #1d212a;
-           border: 0.5px solid #333845; border-radius: 8px; padding: 9px 14px; font-size: 13px; display: none; }
-  .empty { padding: 28px; text-align: center; color: #8b909c; }
-  a.vlink { color: #74b3ee; cursor: pointer; text-decoration: underline; }
+  .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--btn);
+           border: 0.5px solid var(--btn-line); border-radius: 8px; padding: 9px 14px; font-size: 13px;
+           display: none; z-index: 20; }
+  .empty { padding: 28px; text-align: center; color: var(--muted); }
   /* Visible marker so a recording is self-evidently masked — and so you can't forget
      it's on and mistake the fake addresses for your real ones. */
   body.demo .title::after { content: "demo mode"; font-size: 11px; font-weight: 500;
-    background: #33270f; color: #f0b86e; padding: 3px 9px; border-radius: 999px; }
-  /* Network History sheet — a STATIC overlay (never inside an innerHTML-re-rendered
-     list, per the destroyed-log-panel lesson). Backdrop + right-side sliding panel. */
-  .sheetback { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; z-index: 40; }
-  .sheetback.open { display: block; }
-  .sheet { position: fixed; top: 0; right: 0; height: 100%; width: min(560px, 100vw);
-           background: #0f1115; border-left: 0.5px solid #272b34; transform: translateX(100%);
-           transition: transform .18s ease; overflow-y: auto; z-index: 41;
-           padding: 0 20px 40px; }
-  .sheet.open { transform: translateX(0); }
-  .sheethead { position: sticky; top: 0; background: #0f1115; display: flex; align-items: flex-start;
-               justify-content: space-between; gap: 12px; padding: 20px 0 10px; border-bottom: 0.5px solid #272b34; }
-  .sheethead .h { font-weight: 600; font-size: 16px; }
-  .sheethead .m { font-size: 12px; color: #8b909c; margin-top: 3px; }
+    background: var(--warn-soft); color: var(--warn); padding: 3px 9px; border-radius: 999px; }
   /* Click-to-expand event card — an inline detail panel under the clicked event row.
      Expansion state is re-derived on every render (survives the 30s poll). */
-  .evrow:hover { background: #171a21; }
-  .evcard { background: #0c0e12; padding: 10px 16px 14px 36px; font-size: 12px; }
+  .evrow:hover { background: var(--panel); }
+  .evcard { background: var(--inset); padding: 10px 16px 14px 36px; font-size: 12px; }
   .cl { display: flex; gap: 10px; padding: 2px 0; }
-  .cl .ck { color: #8b909c; width: 96px; flex: none; }
-  .cl .cv { color: #cfd3db; min-width: 0; overflow-wrap: anywhere; }
+  .cl .ck { color: var(--muted); width: 96px; flex: none; }
+  .cl .cv { color: var(--text-2); min-width: 0; overflow-wrap: anywhere; }
+  @media (max-width: 720px) {
+    .cards { grid-template-columns: repeat(2, 1fr); }
+    .wrap, .topbar .bar { padding-left: 12px; padding-right: 12px; }
+    /* .list clips (overflow:hidden), so an unwrapped row does not widen the page — it
+       loses its buttons off the right edge, silently. Wrap instead: the controls drop to
+       a second line rather than becoming unreachable. */
+    .row, .toolbar { flex-wrap: wrap; }
+    .row .meta { flex-basis: 100%; }
+  }
 </style></head>
-<body><div class="wrap">
+<body>
+<div class="topbar"><div class="bar">
   <header>
-    <div class="title"><span>⌁</span> Ground Control <span class="muted mono" style="font-size:12px;font-weight:400" id="domain"></span></div>
-    <div style="display:flex;gap:8px;align-items:center">
-      <button id="histBtn" onclick="openHistory()" style="font-size:12px">Network History</button>
-      <label class="muted" style="display:flex;align-items:center;gap:6px;font-size:12px"
+    <div class="title"><span>⌁</span> Ground Control </div>
+    <div class="ctl">
+      <label class="muted check"
              title="Mask private data for a screen recording: IP addresses, device names and your username. Display only — nothing on disk changes. It canNOT detect arbitrary secrets in command lines or log output, so review the footage before publishing.">
         <input type="checkbox" id="demoToggle"/> 🎥 demo</label>
-      <label class="muted" style="display:flex;align-items:center;gap:6px;font-size:12px">
-        <input type="checkbox" id="showVendor"/> show vendor</label>
-      <button class="icon" id="refresh" title="Refresh">↻</button>
+      <button class="icon" id="refresh" title="Refresh" aria-label="Refresh everything">↻</button>
     </div>
   </header>
-  <div class="cards" id="cards"></div>
-  <div class="section" style="display:flex;align-items:center;justify-content:space-between">
-    <span>Apps</span>
-    <button id="scanBtn" onclick="scanApps()" style="text-transform:none;letter-spacing:0;font-size:12px">⌕ Scan for projects</button>
+  <!-- Tabs, not stacked sections: reaching the watch used to be a screen and a half of
+       scrolling. Every panel below stays MOUNTED and polled — only visibility moves. -->
+  <div class="tabs" id="tabs" role="tablist" aria-label="Sections">
+    <button class="tab" role="tab" id="tab-agents" data-tab="agents" aria-controls="panel-agents" aria-selected="true" tabindex="0">Agents <span class="count" id="count-agents"></span></button>
+    <button class="tab" role="tab" id="tab-apps" data-tab="apps" aria-controls="panel-apps" aria-selected="false" tabindex="-1">Apps <span class="count" id="count-apps"></span></button>
+    <button class="tab" role="tab" id="tab-ports" data-tab="ports" aria-controls="panel-ports" aria-selected="false" tabindex="-1">Ports <span class="count" id="count-ports"></span></button>
+    <button class="tab" role="tab" id="tab-watch" data-tab="watch" aria-controls="panel-watch" aria-selected="false" tabindex="-1">Watch <span class="count" id="count-watch"></span></button>
+    <button class="tab" role="tab" id="tab-history" data-tab="history" aria-controls="panel-history" aria-selected="false" tabindex="-1">History <span class="count" id="count-history"></span></button>
   </div>
-  <div class="list" id="applist"></div>
-  <div class="list" id="discover" style="display:none;margin-top:10px"></div>
-  <div class="section">Agents</div>
-  <div class="list" id="list"><div class="empty">Loading…</div></div>
-  <div class="logwrap" id="logwrap">
-    <div class="loghead"><span class="mono" id="logpath"></span>
-      <span style="display:flex;gap:12px;align-items:center"><span id="lognote"></span>
-        <label class="muted" style="display:flex;align-items:center;gap:5px;font-size:12px">
-          <input type="checkbox" id="follow"/> follow</label>
+</div></div>
+<div class="wrap">
+  <section class="panel" id="panel-agents" role="tabpanel" aria-labelledby="tab-agents">
+    <div class="cards" id="cards"></div>
+    <div class="toolbar"><span class="h">Agents</span>
+      <span class="ctl"><label class="muted check"><input type="checkbox" id="showVendor"/> show vendor</label></span>
+    </div>
+    <div class="list" id="list"><div class="empty">Loading…</div></div>
+    <!-- The log panel's static home. It is MOVED under the clicked row in either #list or
+         #applist, so it must never be rebuilt by a render (see logPanel in the script). -->
+    <div class="logwrap" id="logwrap">
+      <div class="loghead"><span class="mono" id="logpath"></span>
+        <span style="display:flex;gap:12px;align-items:center"><span id="lognote"></span>
+          <label class="muted check">
+            <input type="checkbox" id="follow"/> follow</label>
+        </span>
+      </div>
+      <pre class="log" id="log"></pre>
+    </div>
+  </section>
+  <section class="panel" id="panel-apps" role="tabpanel" aria-labelledby="tab-apps" hidden>
+    <div class="toolbar"><span class="h">Apps</span>
+      <span class="ctl"><button id="scanBtn">⌕ Scan for projects</button></span>
+    </div>
+    <div class="list" id="applist"><div class="empty">Loading…</div></div>
+    <div class="list" id="discover" style="display:none;margin-top:10px"></div>
+  </section>
+  <section class="panel" id="panel-ports" role="tabpanel" aria-labelledby="tab-ports" hidden>
+    <div class="toolbar"><span class="h">Listening ports</span>
+      <span class="ctl"><span id="portverdict"></span>
+        <input class="mono" id="portcheck" placeholder="port free?" inputmode="numeric"
+               aria-label="Check whether a port is free"/>
+        <label class="muted check"><input type="checkbox" id="showSystem"/> show system</label>
       </span>
     </div>
-    <pre class="log" id="log"></pre>
-  </div>
-  <div class="section" style="display:flex;align-items:center;justify-content:space-between">
-    <span>Listening ports</span>
-    <span style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0">
-      <span id="portverdict"></span>
-      <input class="mono" id="portcheck" placeholder="port free?" inputmode="numeric"
-             style="width:90px;background:#1d212a;border:0.5px solid #333845;border-radius:8px;
-                    color:#d7dae1;padding:5px 9px;font-size:12px"/>
-      <label class="muted" style="display:flex;align-items:center;gap:6px;font-size:12px">
-        <input type="checkbox" id="showSystem"/> show system</label>
-    </span>
-  </div>
-  <div class="list" id="portlist"><div class="empty">Loading…</div></div>
-  <div class="section" style="display:flex;align-items:center;justify-content:space-between">
-    <span>Network watch</span>
-    <span class="muted" id="watchmeta" style="text-transform:none;letter-spacing:0"></span>
-  </div>
-  <div class="list" id="watchlist"><div class="empty">Loading…</div></div>
+    <div class="list" id="portlist"><div class="empty">Loading…</div></div>
+  </section>
+  <section class="panel" id="panel-watch" role="tabpanel" aria-labelledby="tab-watch" hidden>
+    <div class="toolbar"><span class="h">Network watch</span>
+      <span class="muted" id="watchmeta"></span>
+    </div>
+    <div class="list" id="watchlist"><div class="empty">Loading…</div></div>
+  </section>
+  <section class="panel" id="panel-history" role="tabpanel" aria-labelledby="tab-history" hidden>
+    <div class="toolbar"><span class="h">Network history</span>
+      <span class="muted" id="histmeta"></span>
+    </div>
+    <div class="section">Events</div>
+    <div class="list" id="histevents"><div class="empty">Loading…</div></div>
+    <div class="section">Devices seen</div>
+    <div class="list" id="histdevices"></div>
+    <div class="section">Notifications sent</div>
+    <div class="list" id="histnotifs"></div>
+  </section>
 </div>
-<!-- Network History: a static overlay. It lives OUTSIDE .wrap and is never rebuilt by a
-     list poll, so a re-render can't destroy it (the log-panel lesson). -->
-<div class="sheetback" id="sheetback" onclick="closeHistory()"></div>
-<aside class="sheet" id="histsheet" aria-hidden="true">
-  <div class="sheethead">
-    <div><div class="h">Network History</div><div class="m" id="histmeta"></div></div>
-    <button class="icon" onclick="closeHistory()" title="Close">✕</button>
-  </div>
-  <div class="section">Events</div>
-  <div class="list" id="histevents"></div>
-  <div class="section">Devices seen</div>
-  <div class="list" id="histdevices"></div>
-  <div class="section">Notifications sent</div>
-  <div class="list" id="histnotifs"></div>
-</aside>
 <div class="toast" id="toast"></div>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -594,7 +651,6 @@ function rel(iso) {
   if (s < 60) return "just now"; if (s < 3600) return f(s/60, "m") + " ago";
   if (s < 86400) return f(s/3600, "h") + " ago"; return f(s/86400, "d") + " ago";
 }
-function statusClass(s) { return s === "running" ? "run" : s === "unloaded" ? "off" : "ok"; }
 
 // ---- Demo mode ------------------------------------------------------------
 // Masks the private data on screen for a public screen recording. DISPLAY ONLY:
@@ -651,8 +707,13 @@ function scrub(x) {
   if (x && typeof x === "object") {
     const out = {};
     for (const [k, v] of Object.entries(x)) {
+      // KEYS are data too. The sighting roster is keyed `conn:<ip>:<port>`, so copying keys
+      // verbatim put a real LAN address on the devices roster in demo mode — the one screen
+      // that exists to be filmed. Worse, the matching event's `key` VALUE *was* masked, so
+      // the two stopped agreeing and every conn card silently lost its first/last-seen
+      // lines. Masking both restores that join, because the fake map is stable.
       // A hostname field is a device name whether or not it looks like one.
-      out[k] = (k === "hostname" && typeof v === "string" && v) ? fakeHost(v) : scrub(v);
+      out[scrubText(k)] = (k === "hostname" && typeof v === "string" && v) ? fakeHost(v) : scrub(v);
     }
     return out;
   }
@@ -681,12 +742,84 @@ const esc = (s) => String(s).replace(/[&<>"']/g,
 // decodes the entity before the JS parser runs, so a quote still breaks out. Values
 // that drive an action ride in data-attributes read by a delegated listener instead.
 
+// ---- Tabs -----------------------------------------------------------------
+// Visibility only: every panel stays MOUNTED and every renderer keeps running on the 30s
+// poll whether or not its panel shows. The sections are coupled — the log panel parks under
+// a row in either list, the watch card cross-checks portData, removing an app refreshes
+// ports, and the (N!) title badge comes from a fetch the Watch panel doesn't own — so
+// unmounting the hidden ones would break four features to save four requests.
+//
+// The hash is the ONLY persistence. Storage is banned outright in this script (demo mode
+// must never survive a reload), and a hash is shareable: /#ports is a link to a tab.
+// __TABS__ (extracted and EXECUTED by tests/test_page.py — it may use only $(), location and
+// the nodes' hidden / tabIndex / setAttribute; keep it that self-contained)
+const TABS = ["agents", "apps", "ports", "watch", "history"];
+let currentTab = "agents";
+// "The History panel is visible." loadAll re-fetches /api/watch/history only while true, so
+// a tab nobody is looking at costs nothing.
+let historyOpen = false;
+
+// Panels are id="panel-<name>", never id="<name>", so the hash can't also be an element id
+// and make the browser scroll to it. Anything unknown — "", "#demo", junk — is the default.
+function fromHash() {
+  const name = location.hash.slice(1);
+  return TABS.includes(name) ? name : "agents";
+}
+
+// NEVER fetches. Boot runs this before demo mode is armed, and /?demo=1#history would
+// otherwise put an unmasked history request on the first frame a recorder captures.
+function selectTab(name) {
+  for (const t of TABS) {
+    const on = t === name, tab = $("tab-" + t);
+    tab.setAttribute("aria-selected", on ? "true" : "false");
+    tab.tabIndex = on ? 0 : -1;      // roving tabindex: the bar is ONE tab stop
+    $("panel-" + t).hidden = !on;
+  }
+  currentTab = name;
+  historyOpen = name === "history";
+}
+// __/TABS__
+
+// Every RUNTIME switch goes through here: click, arrow keys, hashchange, and an event
+// card's View log. History is the one panel not polled while hidden, so becoming visible
+// fetches it now rather than up to 30s later.
+function goTab(name) {
+  const was = historyOpen;
+  selectTab(name);
+  if (historyOpen && !was) loadHistory();
+  // replaceState, not location.hash: a tab is a view, not a page — the back button should
+  // leave the dashboard, not walk back through five tabs.
+  if (fromHash() !== name) history.replaceState(null, "", "#" + name);
+}
+window.addEventListener("hashchange", () => goTab(fromHash()));
+$("tabs").onclick = (ev) => { const t = ev.target.closest("[data-tab]"); if (t) goTab(t.dataset.tab); };
+$("tabs").onkeydown = (ev) => {
+  const i = TABS.indexOf(currentTab), last = TABS.length - 1;
+  const j = ev.key === "ArrowLeft" ? (i || TABS.length) - 1
+    : ev.key === "ArrowRight" ? (i + 1) % TABS.length
+    : ev.key === "Home" ? 0 : ev.key === "End" ? last : -1;
+  if (j < 0) return;
+  ev.preventDefault();
+  goTab(TABS[j]);
+  $("tab-" + TABS[j]).focus();
+};
+
+// The live count on a tab button — the reason you don't have to visit a panel to know
+// something is wrong there. textContent, never innerHTML: these come from the same
+// machine-derived data the renderers escape.
+function setCount(name, text, cls) {
+  const el = $("count-" + name);
+  el.textContent = text;
+  el.className = "count" + (cls ? " " + cls : "");
+}
+
 async function load() {
   const all = $("showVendor").checked;
   const agents = await api(`/api/agents?all=${all}`);
   const healthy = agents.filter(a => a.healthy && a.status !== "unloaded").length;
   const failed = agents.filter(a => !a.healthy).length;
   const next = agents.map(a => a.next_run).filter(Boolean).sort()[0];
+  setCount("agents", failed ? `${failed} failed` : String(agents.length), failed ? "bad" : "");
   $("cards").innerHTML = [
     ["Agents", agents.length], ["Healthy", healthy], ["Failed", failed],
     ["Next run", next ? new Date(next).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) : "—"],
@@ -700,7 +833,7 @@ async function load() {
       : a.healthy ? `<span class="pill ${a.status==='running'?'run':'ok'}">${esc(a.status)}</span>`
       : `<span class="pill bad">failed</span>`;
     const next = a.next_run ? ` · next ${rel(a.next_run)}` : "";
-    const note = a.annotation?.purpose ? ` · <span style="color:#aeb4c0">${esc(a.annotation.purpose)}</span>` : "";
+    const note = a.annotation?.purpose ? ` · <span style="color:var(--text-3)">${esc(a.annotation.purpose)}</span>` : "";
     const hover = a.annotation ? [a.annotation.note, a.annotation.repo].filter(Boolean).join(" — ") : "";
     return `<div class="row" data-log-key="${esc(a.label)}" ${hover ? `title="${esc(hover)}"` : ""}>
       <span class="dot ${dot}"></span>
@@ -758,17 +891,15 @@ function placeLog() {
 
 // Called after every list render: re-insert the (now detached) panel under its row,
 // or give up and close it when the row is gone.
+function closeLog() { logPanel.classList.remove("open"); openLog = null; logURL = null; }
+
 function reattachLog() {
   if (!openLog) return;
-  if (!placeLog()) {
-    logPanel.classList.remove("open");
-    openLog = null;
-    logURL = null;
-  }
+  if (!placeLog()) closeLog();
 }
 
 async function openLogPanel(key, url, title) {
-  if (openLog === key) { logPanel.classList.remove("open"); openLog = null; logURL = null; return; }
+  if (openLog === key) { closeLog(); return; }
   openLog = key;
   logURL = url;
   await refreshLog(title);
@@ -792,8 +923,14 @@ function toast(msg) { const t = $("toast"); t.textContent = msg; t.style.display
   clearTimeout(toastT); toastT = setTimeout(() => t.style.display = "none", 2600); }
 
 // ---- Apps (dev servers launched as transient launchd agents) ---------------
+let armedRemove = null; // slug armed for the two-tap confirm (destructive)
+
 async function loadApps() {
   const apps = await api("/api/apps");
+  // A poll landing inside the 3s confirm window re-renders a plain ✕ while the next click
+  // would still delete — the confirm has to disarm with the render (loadPorts already does).
+  armedRemove = null;
+  setCount("apps", apps.filter(a => a.status === "running").length || "", "run");
   if (!apps.length) {
     $("applist").innerHTML = `<div class="empty">No apps configured — scan for projects to add your dev servers, or edit apps.json (see apps.json.example).</div>`;
     return;
@@ -806,17 +943,17 @@ async function loadApps() {
       : a.status === "failed" ? `<span class="pill bad">failed</span>`
       : `<span class="pill off">${esc(a.status)}</span>`;
     const port = a.port ? ` <span class="muted" style="font-weight:400">· :${esc(a.port)}</span>` : "";
-    const note = a.annotation?.purpose ? ` · <span style="color:#aeb4c0">${esc(a.annotation.purpose)}</span>` : "";
+    const note = a.annotation?.purpose ? ` · <span style="color:var(--text-3)">${esc(a.annotation.purpose)}</span>` : "";
     const drift = a.port_mismatch
-      ? ` · <span style="color:#f0b86e">⚠ serving on :${Number(a.open_port)} — declared :${esc(a.port)} (another app may hold it)</span>`
+      ? ` · <span style="color:var(--warn)">⚠ serving on :${Number(a.open_port)} — declared :${esc(a.port)} (another app may hold it)</span>`
       : "";
     const sharedNote = !a.port_mismatch && a.port_shared_with?.length
       ? ` · <span class="muted">port also declared by ${esc(a.port_shared_with.join(", "))}</span>`
       : "";
     const sub = a.missing
-      ? `<span style="color:#f08b86">${esc(a.dir)} no longer exists — re-scan to repair the path, or ✕ to remove</span>`
+      ? `<span style="color:var(--bad-ink)">${esc(a.dir)} no longer exists — re-scan to repair the path, or ✕ to remove</span>`
       : a.blocked
-      ? `<span style="color:#f08b86">${esc(a.dir)} is TCC-protected — move it out of Documents/Desktop/Downloads to launch</span>`
+      ? `<span style="color:var(--bad-ink)">${esc(a.dir)} is TCC-protected — move it out of Documents/Desktop/Downloads to launch</span>`
       : `${esc(a.command)} · ${esc(a.dir)}${a.pid ? ` · pid ${a.pid}` : ""}${a.last_exit != null && a.status !== "running" ? ` · exit ${a.last_exit}` : ""}${note}${drift}${sharedNote}`;
     const open = a.status === "running" && a.open_port
       ? `<button data-open-port="${Number(a.open_port)}" title="Open http://localhost:${Number(a.open_port)}" aria-label="Open ${esc(a.name)} in a browser tab">↗</button>` : "";
@@ -843,13 +980,11 @@ async function loadApps() {
   reattachLog();
 }
 
-let armedRemove = null; // slug armed for the two-tap confirm (destructive)
-
 async function removeApp(slug) {
   if (armedRemove !== slug) {
     armedRemove = slug;
     const b = $(`rm-${slug}`);
-    b.textContent = "sure?"; b.style.width = "auto"; b.style.padding = "6px 8px"; b.style.color = "#f08b86";
+    b.textContent = "sure?"; b.style.width = "auto"; b.style.padding = "6px 8px"; b.style.color = "var(--bad-ink)";
     setTimeout(() => { if (armedRemove === slug) { armedRemove = null; loadApps(); } }, 3000);
     return;
   }
@@ -883,9 +1018,9 @@ async function scanApps() {
       : c.conflict
       ? `<span class="muted">${esc(c.dir)} — ${esc(c.reason)}</span>`
       : c.moved
-      ? `${esc(c.command)} · ${esc(c.dir)}<br><span style="color:#74b3ee">was ${esc(c.previous_dir)} — updates the existing app's path</span>`
+      ? `${esc(c.command)} · ${esc(c.dir)}<br><span style="color:var(--run-ink)">was ${esc(c.previous_dir)} — updates the existing app's path</span>`
       : c.blocked
-      ? `<span style="color:#f08b86">${esc(c.command)} · ${esc(c.dir)} — launchd can't read this folder (TCC); move it to your home root to launch</span>`
+      ? `<span style="color:var(--bad-ink)">${esc(c.command)} · ${esc(c.dir)} — launchd can't read this folder (TCC); move it to your home root to launch</span>`
       : `${esc(c.command)} · ${esc(c.dir)}`;
     const inert = c.already || !c.launchable || c.conflict;
     return `<div class="row" ${inert ? 'style="opacity:.55"' : ''}>
@@ -896,9 +1031,9 @@ async function scanApps() {
       </div>
       ${state}
     </div>`;
-  }).join("") + `<div class="row" style="justify-content:flex-end;background:#11141a">
+  }).join("") + `<div class="row" style="justify-content:flex-end;background:var(--inset)">
       <span class="muted" style="flex:1;font-size:12px">commands are inferred server-side — hand-tune apps.json afterwards if a project needs env vars or a different port</span>
-      <button onclick="adoptApps()">＋ Add selected</button>
+      <button data-do="adopt">＋ Add selected</button>
     </div>`;
   $("discover").style.display = "";
 }
@@ -940,6 +1075,10 @@ async function loadPorts() {
   portData = await api(`/api/ports?all=true`);
   armedKill = null;
   const shown = $("showSystem").checked ? portData : portData.filter(p => p.kind === "claimed" || !p.system);
+  const serving = shown.filter(p => p.kind !== "claimed");
+  const exposed = serving.filter(p => !p.localhost).length;
+  setCount("ports", exposed ? `${serving.length} · ${exposed} exposed` : String(serving.length),
+    exposed ? "bad" : "");
   if (!shown.length) { $("portlist").innerHTML = `<div class="empty">Nothing is listening.</div>`; checkPort(); return; }
   $("portlist").innerHTML = shown.map(p => {
     // Claimed: a configured app declares this port but nothing is serving it, so the
@@ -984,7 +1123,7 @@ async function killPort(pid) {
   if (armedKill !== pid) {           // two-tap confirm: first tap arms
     armedKill = pid;
     const b = $(`kill-${pid}`);
-    b.textContent = "sure?"; b.style.width = "auto"; b.style.padding = "6px 8px"; b.style.color = "#f08b86";
+    b.textContent = "sure?"; b.style.width = "auto"; b.style.padding = "6px 8px"; b.style.color = "var(--bad-ink)";
     setTimeout(() => { if (armedKill === pid) { armedKill = null; loadPorts(); } }, 3000);
     return;
   }
@@ -1012,7 +1151,7 @@ function checkPort() {
 // with one delegated listener: inline onclick="ack('${key}')" would let a quote in a
 // process name break out of the JS string.
 
-// ---- Expandable event rows (shared by the watch tail and the History sheet) ----
+// ---- Expandable event rows (shared by the watch tail and the History tab) ----
 // Clicking a row toggles membership in this Set; because the row TEMPLATE consults it,
 // an open card is re-rendered open on the next 30s poll (the parked-panel lesson, one
 // level up). `args` in the listener card is the most attacker-shaped string here — esc().
@@ -1093,9 +1232,13 @@ function evListHTML(events, muted) {
   return events.map(e => {
     const id = eventId(e), open = expandedEvents.has(id);
     const dot = e.banner ? (e.severity === "bad" ? "bad" : "warn") : "off";
+    // Severity in WORDS as well as colour: a dot says nothing to a screen reader, and the
+    // two reds are the pair most people who can't separate them can't separate.
+    const sev = e.banner ? (e.severity === "bad" ? "alert" : "notice") : "log";
     return `<div class="row evrow" data-ev="${esc(id)}" style="${muted ? "opacity:.55;" : ""}cursor:pointer">
         <span class="dot ${dot}"></span>
         <div class="meta"><div class="sub">${esc(e.summary)}${e.detail ? " · " + esc(e.detail) : ""} · ${rel(e.ts)}</div></div>
+        <span class="pill ${dot}">${sev}</span>
         <span class="muted" style="font-size:11px">${open ? "▾" : "▸"}</span>
       </div>` + (open ? evCard(e) : "");
   }).join("");
@@ -1118,6 +1261,7 @@ function renderWatch() {
   const w = lastWatch;
   if (!w) return;
   const n = w.active.length;
+  setCount("watch", n ? String(n) : "", w.active.some(a => a.severity === "bad") ? "bad" : "warn");
   document.title = n ? `(${n}!) Ground Control` : "Ground Control";
   $("watchmeta").textContent =
     (w.errors ? `⚠ ${w.errors} watch errors · ` : "") +
@@ -1133,24 +1277,17 @@ function renderWatch() {
       <button data-ack="${esc(a.key)}" title="OK — never alert for this again">OK</button>
       ${a.key.startsWith("listen:") ? `<button data-ackcmd="${esc(a.command)}" title="Always allow ${esc(a.command)} on any port">allow app</button>` : ""}
     </div>`).join("");
-  // The live section shows only the recent tail — the full ring lives in the History sheet.
+  // The live panel shows only the recent tail — the full ring lives in the History tab.
   const recent = evListHTML(w.events.slice(0, 10), true);
   $("watchlist").innerHTML = active + recent ||
     `<div class="empty">Nothing new — fresh listeners, LAN exposure, inbound connections, and agent failures will show up here.</div>`;
 }
 
-// ---- Network History sheet ------------------------------------------------
-// A static overlay populated from /api/watch/history: the FULL event ring plus every
-// banner the watcher sent (✓ sent / ✗ failed). Fetched only while the sheet is open, so
-// a closed sheet costs zero extra requests. All interpolations go through esc() — the
-// bodies/summaries embed process command names.
-let historyOpen = false;
-
-function openHistory() { historyOpen = true; $("sheetback").classList.add("open");
-  $("histsheet").classList.add("open"); $("histsheet").setAttribute("aria-hidden", "false"); loadHistory(); }
-function closeHistory() { historyOpen = false; $("sheetback").classList.remove("open");
-  $("histsheet").classList.remove("open"); $("histsheet").setAttribute("aria-hidden", "true"); }
-
+// ---- Network history ------------------------------------------------------
+// The History tab, populated from /api/watch/history: the FULL event ring plus every banner
+// the watcher sent (✓ sent / ✗ failed). Fetched only while that tab is showing (goTab on
+// arrival, then the poll while historyOpen), so a tab nobody is on costs zero requests. All
+// interpolations go through esc() — the bodies/summaries embed process command names.
 let lastHistory = null;
 async function loadHistory() {
   lastHistory = await api("/api/watch/history");
@@ -1191,6 +1328,7 @@ function renderHistory() {
   const h = lastHistory;
   if (!h) return;
   const evs = h.events || [], notes = h.notifications || [];
+  setCount("history", String(evs.length));
   $("histmeta").textContent =
     (h.seeded_at ? `watching since ${new Date(h.seeded_at).toLocaleDateString()} · ` : "") +
     `${evs.length} events · ${notes.length} banners` +
@@ -1212,10 +1350,14 @@ function renderHistory() {
     </div>`).join("") || `<div class="empty">No banners sent yet.</div>`;
 }
 
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && historyOpen) closeHistory(); });
+// Escape closes the open log panel — the only transient surface left now that history is a
+// tab rather than an overlay, and the reflex the sheet already trained.
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && openLog) closeLog(); });
 
-// An agent event's "View log" reuses the existing log panel (parks under the agent row).
-function openAgentLog(label) { if (historyOpen) closeHistory(); showLog(label); }
+// An agent event's "View log" reuses the existing log panel, which parks under the agent's
+// row — so switch to that tab FIRST, synchronously: a hash write alone would leave the panel
+// opening inside a hidden panel until the hashchange task ran.
+function openAgentLog(label) { goTab("agents"); showLog(label); }
 
 // Delegated: the handler lives on the container, which innerHTML never replaces. Order:
 // ack buttons → View-log button → event-row toggle (re-renders from cache, no refetch).
@@ -1246,6 +1388,7 @@ $("histevents").onclick = (ev) => {
 function loadAll() { load(); loadApps(); loadPorts(); loadWatch(); if (historyOpen) loadHistory(); }
 $("refresh").onclick = loadAll;
 $("showVendor").onchange = load;
+$("scanBtn").onclick = scanApps;
 // Re-pull everything so the switch takes effect immediately — including an open sheet
 // and an open log panel, whose text is masked by the same api() choke point.
 $("demoToggle").onchange = () => {
@@ -1258,6 +1401,7 @@ $("demoToggle").onchange = () => {
 // their innerHTML is replaced — so these bind once and never accumulate. This is what
 // lets every action value live in a data-attribute: a process name or plist label with
 // a quote in it can no longer close a JS string and run.
+$("discover").onclick = (ev) => { if (ev.target.closest('button[data-do="adopt"]')) adoptApps(); };
 $("list").onclick = (ev) => {
   const btn = ev.target.closest("button[data-agent]");
   if (!btn) return;
@@ -1295,6 +1439,9 @@ if (/[?&]demo=1\\b/.test(location.search) || location.hash === "#demo") {
   $("demoToggle").checked = true;
   document.body.classList.add("demo");
 }
+// The tab comes from the hash and is applied BEFORE the first fetch — via selectTab, which
+// cannot fetch, so /?demo=1#history is masked by the time loadAll makes that request.
+selectTab(fromHash());
 loadAll();
 setInterval(loadAll, 30000);
 </script></body></html>

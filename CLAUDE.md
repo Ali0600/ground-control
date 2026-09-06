@@ -164,12 +164,29 @@ historical entries in `docs/DECISIONS.md` / `docs/learnings.md`, which are recor
   `notify_failures`, surfaced in the meta line — a dead notification channel must announce
   itself, same principle as `watch_errors`. `post_notification` runs OUTSIDE the state
   lock (osascript can take seconds); recording re-takes the lock after.
-- **The Network History sheet is STATIC overlay HTML** (`#sheetback` + `#histsheet`,
-  outside `.wrap`), opened by the header button — never built inside a poll-re-rendered
-  list, because `innerHTML` destroys child nodes (the log-panel lesson). `/api/watch/history`
-  is fetched from ONE place (`loadHistory`), and the 30s poll re-fetches it ONLY while the
-  sheet is open (`if (historyOpen)`), so a closed sheet costs zero requests. Every sheet
-  interpolation goes through `esc()` (bodies/summaries embed process command names).
+- **The UI is FIVE TABS (`TABS` in the page script), and switching is VISIBILITY ONLY.**
+  Every panel stays mounted (`hidden` attribute, plus a `[hidden] { display: none !important }`
+  guard — the bare attribute loses to any `display:` rule) and every renderer keeps running on
+  the 30s poll whether or not its panel shows, because the sections are coupled: the log panel
+  parks under a row in `#list` OR `#applist`, `evCard` cross-checks `portData`, removing an app
+  refreshes ports, and the `(N!)` title badge comes from a fetch the Watch panel doesn't own.
+  Unmounting the hidden ones would break four features to save four requests.
+  - **The hash is the ONLY persistence** (storage is banned outright — see the demo-mode
+    rule), so `/#ports` is a shareable link. `goTab` uses `history.replaceState`, not
+    `location.hash`: a tab is a view, so Back should leave the page rather than walk back
+    through five tabs.
+  - **`selectTab` must never fetch.** Boot runs it BEFORE the demo-arming block would have a
+    chance to matter — the order is arm demo → `selectTab(fromHash())` → `loadAll()` — because
+    `/?demo=1#history` would otherwise put an unmasked history request on the first frame a
+    recorder captures. `goTab` is the runtime path and fetches history when that tab becomes
+    visible; a text test and a node-executed one pin both halves.
+  - **History is a tab panel, not an overlay** — never built inside a poll-re-rendered list,
+    because `innerHTML` destroys child nodes (the log-panel lesson). `/api/watch/history` is
+    fetched from ONE place (`loadHistory`), and the 30s poll re-fetches it ONLY while
+    `historyOpen`, so a tab nobody is on costs zero requests. Every interpolation goes through
+    `esc()` (bodies/summaries embed process command names).
+  - **Escape closes the open LOG PANEL** now that the sheet is gone. Don't "restore" it to
+    closing a history overlay; there isn't one.
 - **Events carry a structured `data` dict** (`_emit`'s `data` arg → `_listener_data` /
   `_conn_data` / `_agent_data`) beside the compact `detail` string — that's what the
   click-to-expand card reads (full command line `args`, addresses, remote endpoint, exit
@@ -291,9 +308,18 @@ cd <this repo> && ./scripts/assemble-demo.sh
   (`launchd._run`, `apps._run`, `ports._out`), not above it: patching `launchd.run_now` tests
   the mock, patching `_run` exercises the handler, the lookup and the argv.
 - The UI's invisible constraints are pinned as **text assertions over the `PAGE` string** in
-  `tests/test_page.py` (no JS runner exists here).
+  `tests/test_page.py` (no JS runner exists here) — except the two blocks that are EXECUTED
+  under node against a stub, because a text assertion cannot tell a working masker from a
+  decorative one: `// __SCRUB__` (demo masking) and `// __TABS__` (tab switching). Keep both
+  self-contained; the tab stub models only `hidden` / `tabIndex` / `setAttribute`, so reaching
+  for `classList` or `querySelector` in that block breaks it loudly, which is the point.
 - **Prove new tests fail-first.** Sabotage, watch it go red, then restore **from a file copy and
-  compare checksums** — never `git checkout` on a file with uncommitted work.
+  compare checksums** — never `git checkout` on a file with uncommitted work. **A changed file
+  hash is not proof the mutation reached the JUDGE**: writing `app/main.py` and immediately
+  launching pytest raced here, and about half the runs imported the pre-sabotage source and
+  reported a false survivor. Wait until a CHILD interpreter's own `PAGE` hash differs from the
+  pristine one before running the test, and report "never became visible" as a harness fault
+  rather than as a verdict.
 - Check the **test count**, not just "passed": an edit once silently merged two tests and the
   suite still read green.
 
