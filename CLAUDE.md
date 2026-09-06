@@ -36,7 +36,14 @@ historical entries in `docs/DECISIONS.md` / `docs/learnings.md`, which are recor
 
 ## Workflow
 - **Branch → PR → green → squash-merge.** `main` is protected by rulesets (required check
-  "Lint + test"; history protection has no bypass).
+  **"Lint + test"**; history protection has no bypass).
+- **That check name is a contract with a ruleset stored in the GitHub UI, where no diff shows
+  it.** Adding the 3.9/3.12 matrix renamed the only job to `Lint + test (py3.9)`, so the
+  required context could never report again — the PR was refused by the base-branch policy with
+  nothing red to explain why, and every later PR would have been too. `ci.yml` now carries an
+  aggregate `gate` job that owns the name and `needs:` the matrix, with `if: always()` — without
+  that, a failed matrix leaves the gate SKIPPED, and a skipped required check does not block a
+  merge. `tests/test_workflows.py` pins both.
 - **Never pipe the gate**: `gh pr checks … | tail` swallows the exit code and merged a red PR
   once. Run it unpiped so `&&` sees the real status, and confirm `gh run list` after.
 - Commit messages: no `Co-Authored-By` trailer. Backticks in `-m` get eaten by zsh — use
@@ -191,6 +198,34 @@ historical entries in `docs/DECISIONS.md` / `docs/learnings.md`, which are recor
   CI runs 3.12 and cannot catch this — dry-run any floor bump on the 3.9 venv. PRs also run the
   user's own [preflight](https://github.com/Ali0600/preflight) action with `python-version: 3.9`.
 
+## Security invariants
+
+- **Loopback is not a boundary against a web page** — the browser is on loopback too. Nine
+  mutating routes take no request body, which makes a cross-origin `<form method=POST>` a CORS
+  *simple request*: delivered and EXECUTED, with only the response withheld. `BlockCrossOriginWrites`
+  (a pure ASGI middleware in `app/main.py`) refuses a non-GET whose `Sec-Fetch-Site` is not
+  same-origin, falling back to comparing `Origin` against the `Host` we were addressed as. A
+  caller sending neither header is not a browser (curl, the recorder, the playbook below) and is
+  allowed — a local process reaches the socket regardless. `TrustedHostMiddleware` closes DNS
+  rebinding, which is what lets reads stay open. `tests/test_security.py` parametrises over the
+  app's **own route table**, so a route added later inherits the tests instead of shipping
+  unguarded.
+- **Every renderer escapes what it interpolates.** `esc()` used to sit halfway down the script:
+  everything below it escaped, everything above it did not — a split by position, not principle.
+  The four above it interpolate plist Labels, `apps.json`, `lsof` process names, directory names,
+  and the `name` of any `package.json` under a scanned root. Cloning a repo named
+  `<img src=x onerror=…>` and clicking Scan was a live XSS on the dashboard's own origin, which
+  can drive every route including adopt + start → `/bin/zsh -c`. **`esc()` does NOT help inside
+  `onclick="act('${x}')"`** — the browser decodes `&#39;` before the JS parser runs — so action
+  values ride in `data-` attributes read by delegated listeners on the static containers.
+- **`lines` is clamped** on both log routes (`Query(200, ge=1, le=5000)`): unbounded, `lines=0`
+  meant `data[0:]` — the whole file through a parameter that reads like a limit.
+- **The agent routes refuse `com.launchddash.app.*` labels.** We mint them, so they are the most
+  guessable on the machine, and their own stop path is what deletes the generated plist.
+- **A workspace `package.json` `name` is validated** against npm's grammar before it becomes a
+  shell word in `npm run dev -w <name>` — that string comes from a repo under a scanned root and
+  is persisted to `apps.json`, then run by `/bin/zsh -c`.
+
 ## Privacy — this repo is public
 
 Two gates, because neither can do the other's job:
@@ -238,6 +273,23 @@ cd <this repo> && ./scripts/assemble-demo.sh
 
 ## Testing conventions
 - Fixtures only — no live `launchctl`/`lsof`; neutral paths (`/Users/dev`), never real ones.
+- **`tests/conftest.py` redirects every real-file path, and patching the module constant is NOT
+  enough.** These functions capture the path as a DEFAULT ARGUMENT — `def save_state(state, path
+  = STATE_PATH)` — and defaults are evaluated once at def time, so `setattr(netwatch,
+  "STATE_PATH", tmp)` leaves `save_state.__defaults__` holding the real `Path`. The no-argument
+  call, the only dangerous one, is exactly what the rebinding misses: a `save_state(state)` while
+  writing that fixture destroyed the live `netwatch.json` (recovered from `netwatch.log.jsonl`,
+  which is why that archive is append-only). The fixture patches the attribute **and** every
+  captured default, including importers (`discover` imports `CONFIG_PATH` from `apps`) and
+  list-valued search paths (`launchd.AGENT_DIRS`).
+- **A test for destructive behaviour must prove it is safe BEFORE performing the destructive
+  step.** `test_a_default_argument_write_lands_in_the_sandbox` asserts the defaults are
+  redirected by inspection, then writes. The first version detected the fault by *performing*
+  it, so the sabotage run that "proved the test worked" destroyed the file a second time.
+- **Route tests never use `with TestClient(app)`** — the context-manager form runs the lifespan
+  and starts the real 30-second watch loop against the machine. Stub at the subprocess boundary
+  (`launchd._run`, `apps._run`, `ports._out`), not above it: patching `launchd.run_now` tests
+  the mock, patching `_run` exercises the handler, the lookup and the argv.
 - The UI's invisible constraints are pinned as **text assertions over the `PAGE` string** in
   `tests/test_page.py` (no JS runner exists here).
 - **Prove new tests fail-first.** Sabotage, watch it go red, then restore **from a file copy and

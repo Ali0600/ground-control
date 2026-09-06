@@ -184,3 +184,72 @@ the previously published GIF was left byte-identical.
 
 **Takeaway:** for any generate-then-verify pipeline, the verification must sit between the
 generation and the destination, not after both.
+
+## Rebinding a name does not rebind the value already captured
+
+A Python default argument is evaluated **once, at `def` time**. `def save_state(state, path
+= STATE_PATH)` copies the `Path` object into `save_state.__defaults__` at import; a later
+`setattr(netwatch, "STATE_PATH", tmp)` changes the module attribute and nothing else. The
+no-argument call — the only one that can surprise you — keeps writing to the original file.
+
+**Why it came up:** writing the test fixture whose entire job was to stop the suite touching
+real state, a `save_state(state)` overwrote the live `netwatch.json`: 262 KB of roster, event
+ring, ack decisions and run ledger. The fixture had "redirected" every constant, and the
+redirect was real — it just wasn't what that call reads. Recovered from `netwatch.log.jsonl`,
+the append-only archive, plus an older snapshot. The same trap covers anything captured at
+definition or import time: decorator arguments, closures, class attributes, a config value
+read into a module-level singleton.
+
+**Takeaway:** to redirect a path, patch the attribute **and** every function default that
+captured it (`fn.__defaults__`), including importers of the constant — then assert the
+**outcome** (where a write actually lands), never the constant's new value.
+
+## A test for a destructive behaviour must prove it is safe before performing it
+
+The obvious way to test "an unredirected write escapes the sandbox" is to do the write and
+see where it landed. That test passes honestly on correct code and is a loaded gun on broken
+code.
+
+**Why it came up:** after fixing the above, the sabotage run that proved the test bites
+destroyed the live state file a *second* time — the test detected the fault by performing it.
+`~/.claude/lessons.md` already says restoring the file is not restoring the world; this is the
+sharper form, because here the suite's own assertion was the destructive act.
+
+**Takeaway:** put a cheap, side-effect-free precondition first (inspect the captured default,
+the resolved path, the connection string) and refuse to run the destructive step when it
+fails. The failure message then names the real fault, and a sabotage run costs nothing.
+
+## Escaping applied by position drifts; escaping applied by rule does not
+
+`esc()` sat halfway down a 900-line script. Every renderer below it escaped every
+interpolation; the four above it escaped none. Nobody decided that — the helper was written
+next to the feature that needed it, and later features inherited its position rather than its
+rule.
+
+**Why it came up:** those four render plist labels, `apps.json`, `lsof` process names,
+directory names, and the `name` field of any `package.json` under a scanned root. Cloning a
+repo named `<img src=x onerror=…>` and clicking Scan ran script on the dashboard's own origin
+— which can drive every route, including adopt-then-start, which reaches `/bin/zsh -c`.
+Verified both ways against the running server: the payload fired on the old build and renders
+as text on the new one.
+
+**Takeaway:** move the helper above every consumer and pin the rule as a test that walks each
+renderer's interpolations, rather than trusting review. When that test was first written it
+sliced on the first `innerHTML` assignment — the empty-state line — so one renderer's slice
+was 53 characters and the gate passed while inspecting nothing; anchor a content gate on a
+marker unique to the region and make it refuse a slice that fails a sanity check.
+
+## `esc()` cannot rescue a value inside an inline event handler
+
+`onclick="act('${label}')"` puts an untrusted value inside a JS string inside an HTML
+attribute. HTML-escaping it is useless: the browser decodes `&#39;` back to `'` *before* the
+JS parser sees the attribute, so the quote still closes the string.
+
+**Why it came up:** the fix for the renderers above could not simply be `esc()` everywhere —
+half the sites were inline handlers. They became `data-` attributes read by one delegated
+listener per static container, which is what the already-escaped watch renderer had been
+doing all along.
+
+**Takeaway:** values that drive an action belong in `data-` attributes with a delegated
+listener; escaping is for text and quoted attribute positions only. A test that forbids
+`on\w+="…${` in a renderer states the rule better than any amount of care.

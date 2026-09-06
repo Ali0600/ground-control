@@ -196,6 +196,21 @@ it is not meant to be exposed beyond your machine. Managing system `LaunchDaemon
 (which need root) is intentionally out of scope for now; this manages your **user**
 agents, no `sudo` required.
 
+Binding to loopback is not, on its own, enough: the browser is on loopback too, so any
+page you visit could POST to these routes and only be denied the *response*. So a
+state-changing request is refused unless the browser says it came from this page
+(`Sec-Fetch-Site`, with an `Origin`-vs-`Host` fallback), and a foreign `Host` header is
+rejected outright — closing the DNS-rebinding path that would otherwise let a remote
+page read your data. Everything the machine puts on the page — plist labels, process
+names, directory names, a scanned repo's `package.json` name — is HTML-escaped, and no
+value is ever interpolated into an inline event handler.
+
+Nothing personal is committed: `pytest tests/test_privacy.py` fails on a real home path,
+a `.local` device name, or a private address outside a small fixture allowlist, and
+`./scripts/privacy-check.sh` greps every tracked file for values derived from *this*
+machine at run time — the half CI cannot do, since knowing them would mean committing
+them.
+
 ## How it works
 - **Discovery / schedule**: Python `plistlib` parses each `*.plist`; `StartCalendarInterval`
   / `StartInterval` / `RunAtLoad` are turned into a label + a minute-resolution next-run.
@@ -216,31 +231,42 @@ live machine.
 
 ## Experience Gained
 - Designed and built a **self-hosted observability and control plane** for a developer
-  machine — FastAPI service plus a zero-dependency web UI — that inventories scheduled
-  jobs, launches dev servers as managed services, attributes every listening port and
-  watches the network, self-hosting as its own agent.
+  machine — a FastAPI service across **21 HTTP routes** plus a **zero-dependency, 44 KB
+  web UI** (no framework, no build step) on **two runtime dependencies** — that inventories
+  scheduled jobs, launches dev servers as managed services, attributes every listening port
+  and watches the network, self-hosting as its own `launchd` agent.
 - Integrated directly with **`launchd` internals** (plist parsing, `launchctl` state
   inspection, job control in the per-user GUI domain) behind a **deterministic,
-  fixture-tested core** — **178 tests**, no live system calls in the suite, and every new
-  guard proven to fail before it was trusted.
-- Built a **network-port observability layer**: `lsof`/`ps` field-mode parsing, process →
-  project attribution via working directory and command-line mining, parent-pid chain
-  walking to link sockets to their managing service, plus loopback-vs-LAN bind auditing
-  and guarded process control.
-- Extended it into a **config-driven service launcher**: dynamic launchd plist generation
-  with hermetic `PATH` construction for daemon contexts, full lifecycle management
-  (start/stop/restart, start-at-login, per-app environment), and a slug-only HTTP surface
-  so commands never cross the wire.
+  fixture-tested core** — **299 tests at 88% coverage against a ratcheted CI floor**, zero
+  live system calls, so a macOS-only tool's suite runs green on Linux CI in under a minute;
+  every guard is proven to fail first by an automated sabotage harness (**23 mutations, each
+  restored from a byte copy and verified byte-identical**).
+- Built a **network-port observability layer** under **15 parser tests**: `lsof`/`ps`
+  field-mode parsing, process → project attribution via working directory and command-line
+  mining, parent-pid chain walking to link sockets to their managing service, loopback-vs-LAN
+  bind auditing, and process control that re-checks liveness before signalling so the
+  endpoint cannot be aimed at an arbitrary pid.
+- Extended it into a **config-driven service launcher** (**56 tests**): dynamic launchd plist
+  generation with hermetic `PATH` construction for daemon contexts, full lifecycle management
+  (start/stop/restart, start-at-login, per-app environment), project discovery across **9
+  scan roots** resolving to **6 adoption states**, and a slug-only HTTP surface so a command
+  never crosses the wire — the browser posts back only which slugs to adopt.
 - Shipped a **background monitoring loop with native alerting and an auditable delivery
-  log** — diffs listener and connection scans against a persisted baseline, classifies
-  remotes (loopback / private / public, failing closed on unparseable input),
-  edge-triggers job-failure alerts while exempting operator-initiated stops, and records
-  every notification as delivered or failed so the alerting channel is itself observable.
+  log** — a 30-second watcher over **6 alert kinds** that diffs listener and connection scans
+  against a persisted baseline, classifies remotes (loopback / private / public, failing
+  closed on unparseable input), edge-triggers job-failure alerts while exempting
+  operator-initiated stops, and records every notification as delivered or failed so the
+  alerting channel is itself observable. Its longitudinal state — capped event and
+  notification rings, a per-agent run ledger and an append-only JSONL archive — is what made
+  a destroyed state file recoverable in full.
 - **Eliminated a 100% false-positive alert class** by diagnosing an ephemeral-port
   collision — macOS draws outbound local ports from the same 49152–65535 range local
   services listen on — and replacing a port-equality join with a listener-address
   reachability check: a structural impossibility rather than a heuristic.
-- Diagnosed and productized a **macOS sandbox (TCC) failure mode**: distinguished
-  EPERM-vs-EACCES semantics, relocated agent-run code out of privacy-protected folders,
-  and encoded the constraint as a first-class "blocked" state in the UI instead of a
-  cryptic error.
+- **Closed a CSRF and an XSS-to-RCE path in a localhost-only tool**, proving each was real
+  by watching the old build fail: a cross-origin form could SIGTERM any listening process
+  (**11 mutating routes**, now covered by tests parametrised over the app's own route table,
+  so a new route inherits them), and a cloned repo whose `package.json` name was an injection
+  payload executed on the dashboard's origin. Paired with a two-part privacy gate that keeps
+  a public repo free of machine-derived data, and a CI matrix that runs the **lowest Python
+  the project supports**, not just the newest.
