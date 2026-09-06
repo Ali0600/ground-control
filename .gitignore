@@ -27,3 +27,7 @@ netwatch.json.bak
 netwatch.json.tmp
 netwatch.log.jsonl
 netwatch.json.bak-*
+
+# The demo MP4 is a build artifact of scripts/assemble-demo.sh — the README embeds
+# the GIF, nothing references the MP4, and each re-record added ~0.5 MB to history.
+docs/demo.mp4
