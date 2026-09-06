@@ -253,3 +253,31 @@ doing all along.
 **Takeaway:** values that drive an action belong in `data-` attributes with a delegated
 listener; escaping is for text and quoted attribute positions only. A test that forbids
 `on\w+="…${` in a renderer states the rule better than any amount of care.
+
+## Tab by visibility, not by mounting, when the panels are coupled
+
+Splitting a page into tabs invites the obvious implementation: render only the active panel.
+That is right when panels are independent, and wrong the moment they share state.
+
+**Why it came up:** this dashboard's four sections look independent and are not. The log panel
+is a single node MOVED under whichever row you clicked, in either of two different lists. The
+network-watch card cross-checks the already-fetched port scan to say "still listening". Removing
+an app refreshes the ports list. The `(N!)` count in the browser tab title comes from a fetch
+that no visible panel owns. Rendering only the active panel would have broken all four to save
+four HTTP requests against localhost. So every panel stays mounted and every renderer keeps
+polling; the tab toggles the `hidden` attribute and nothing else.
+
+Two consequences that are invisible until they bite. `hidden` is a UA rule with the lowest
+possible weight, so any `display:` declaration on the element silently wins — the attribute
+flips and nothing moves; a `[hidden] { display: none !important }` guard ships with the first
+tab. And because a switch is now cheap, it is tempting to let it fetch: here that would have
+put an *unmasked* request on the first frame of a screen recording, because the boot path picks
+the tab from the URL before the privacy layer is armed. Splitting "change what is visible" from
+"go to this tab" — one function that cannot fetch, one that may — is what makes the boot order
+statable and testable.
+
+**Takeaway:** before choosing mount-per-tab, list what the hidden panels still do for the
+visible one — held DOM nodes, shared caches, counters, anything writing the title or a badge.
+Keep the switch a pure visibility change, guard `hidden` against your own CSS, and keep any
+fetching in a separate function so the one the boot path calls provably cannot reach the
+network.

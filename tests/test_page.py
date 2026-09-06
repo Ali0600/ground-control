@@ -150,28 +150,33 @@ def test_watch_allow_app_only_for_listener_alerts():
     assert 'a.key.startsWith("listen:")' in watch
 
 
-def test_history_is_a_static_sheet_not_a_rerendered_child():
-    """The history moved from an in-section toggle to a header-opened sheet. The sheet
-    must be STATIC page HTML (present outside <script>), so a list re-render can never
-    destroy it — the destroyed-log-panel lesson. The old toggle is gone (one surface)."""
+def test_history_is_a_mounted_tab_panel_not_a_sheet():
+    """History has had three homes: an in-section toggle, a header-opened slide-over sheet,
+    and now the fifth tab. It must be STATIC page HTML (present outside <script>) so a list
+    re-render can never destroy it — the destroyed-log-panel lesson — and each retired
+    surface must be gone entirely, because two ways to reach one thing is the bug the
+    previous two moves were fixing."""
     body = PAGE.split("<script>", 1)[0]
-    assert 'id="histBtn"' in body and 'id="histsheet"' in body and 'id="sheetback"' in body
-    assert 'onclick="openHistory()"' in body  # header button opens it
-    # the retired toggle + its inline panel must be fully removed (no second surface)
+    panel = body.split('id="panel-history"', 1)[1].split("</section>", 1)[0]
+    assert 'role="tabpanel"' in panel.split('>', 1)[0], 'history must be a real tabpanel'
+    for part in ("histmeta", "histevents", "histdevices", "histnotifs"):
+        assert f'id="{part}"' in panel, f"#{part} must live inside the history panel"
+    for gone in ("histsheet", "sheetback", "openHistory", "closeHistory", "histBtn"):
+        assert gone not in PAGE, f"the sheet is retired — {gone} must not survive it"
     assert "showHistory" not in PAGE and "historywrap" not in PAGE and "loadNotifications" not in PAGE
 
 
-def test_history_sheet_fetches_on_demand_only():
+def test_history_tab_fetches_on_demand_only():
     """The full ring is larger than the live summary, so /api/watch/history is fetched
-    only by the sheet loader — and re-fetched by the 30s poll ONLY while the sheet is
-    open, so a closed sheet costs zero extra requests."""
+    only by the history loader — and re-fetched by the 30s poll ONLY while that tab is
+    showing, so a tab nobody is on costs zero extra requests."""
     js = script()
-    assert js.count('api("/api/watch/history")') == 1, "history fetched from exactly one place (the sheet loader)"
+    assert js.count('api("/api/watch/history")') == 1, "history fetched from exactly one place"
     loader = js.split("async function loadHistory", 1)[1].split("function renderHistory", 1)[0]
     assert 'api("/api/watch/history")' in loader
     loadall = js.split("function loadAll", 1)[1].split("\n", 1)[0]
     assert "if (historyOpen) loadHistory()" in loadall  # poll re-fetch gated on open
-    # the sent-banner body (process-named text) is esc()'d in the sheet renderer
+    # the sent-banner body (process-named text) is esc()'d in the history renderer
     render = js.split("function renderHistory", 1)[1]
     assert "esc(nt.body)" in render
     # The banner TITLE is deliberately not rendered: every banner this app sends carries
@@ -182,11 +187,13 @@ def test_history_sheet_fetches_on_demand_only():
     assert "${esc(nt.title)}" not in render and "${nt.title}" not in render
 
 
-def test_history_sheet_closes_by_backdrop_and_escape():
+def test_escape_closes_the_open_log_panel():
+    """Escape used to close the history sheet. With history a tab, the log panel is the
+    only transient surface left — so Escape moved rather than being dropped, because a key
+    that silently stops doing anything is how a UI loses its keyboard affordances."""
     js = script()
-    body = PAGE.split("<script>", 1)[0]
-    assert 'id="sheetback" onclick="closeHistory()"' in body  # backdrop click closes
-    assert 'e.key === "Escape" && historyOpen' in js           # Esc closes
+    assert 'e.key === "Escape" && openLog' in js
+    assert "closeHistory" not in js, "the sheet's closer must not linger"
 
 
 def test_watch_renders_detail_and_failed_send_count():
@@ -223,8 +230,12 @@ def test_event_card_escapes_the_command_line_and_offers_agent_log():
     assert "esc(d.args)" in card, "the command line must be escaped"
     assert "portData.find" in card, "listener card cross-checks the live port list"
     assert 'data-agentlog="${esc(d.label' in card  # log button rides a data-attribute
-    # View log closes the sheet first, then reuses the existing log panel
-    assert "if (historyOpen) closeHistory(); showLog(label)" in js.replace("\n", " ")
+    # View log switches to the Agents tab first, then reuses the log panel that parks under
+    # the agent's row — SYNCHRONOUSLY, since a hash write alone would leave the panel opening
+    # inside a hidden panel until the hashchange task ran.
+    fn = js.split("function openAgentLog", 1)[1].split("\n", 1)[0]
+    assert 'goTab("agents")' in fn and "showLog(label)" in fn
+    assert fn.index('goTab("agents")') < fn.index("showLog(label)"), "switch tab, then open"
 
 
 def test_rows_carry_the_log_key_the_panel_is_placed_by():
@@ -376,6 +387,44 @@ console.log(JSON.stringify(out));
     assert out["ts"] == "2026-08-07T13:10:15+00:00", "a clock time is not an IPv6 address"
     assert out["label"] == "com.groceryhelper.recipes", "labels are the portfolio — kept"
     assert out["port"] == 8081
+
+
+def test_object_keys_are_masked_and_still_join_to_the_masked_values():
+    """The sighting roster is an OBJECT KEYED BY ADDRESS (`conn:<ip>:<port>`), and keys used
+    to be copied verbatim while values were masked. Two consequences, and the second is why
+    asserting "no real address survives" is not enough on its own:
+
+      1. the devices roster rendered the real LAN address — in demo mode, on the one screen
+         the demo GIF exists to show;
+      2. the roster key and the matching event's `key` VALUE no longer agreed, so the
+         first/last-seen lookup missed and every conn card lost its sighting lines.
+
+    Masking both sides fixes both, because the fake map is stable within a session — so this
+    test pins the JOIN, not just the absence."""
+    import json as _json
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    assert node, "node is required to verify demo-mode masking"
+    payload = {
+        "known": {"conn:10.0.1.9:8081": {"first_seen": "2026-08-07T13:10:15+00:00", "sessions": 3}},
+        "events": [{"key": "conn:10.0.1.9:8081", "summary": "device 10.0.1.9 connected"}],
+    }
+    prog = _scrub_js() + f"console.log(JSON.stringify(scrub({_json.dumps(payload)})));"
+    res = subprocess.run([node, "-e", prog], capture_output=True, text=True, timeout=30)
+    assert res.returncode == 0, res.stderr
+    out = _json.loads(res.stdout)
+
+    key = list(out["known"])[0]
+    assert "10.0.1.9" not in key, f"the roster key still carries a real address: {key}"
+    assert "192.0.2." in key, f"the key must be masked, not dropped: {key}"
+    assert out["events"][0]["key"] == key, (
+        "the masked key and the masked value must still be the same string, or "
+        "sightingLines() silently finds nothing for every conn card in a recording"
+    )
+    assert out["known"][key]["sessions"] == 3, "the roster entry itself must survive"
+    assert out["known"][key]["first_seen"] == "2026-08-07T13:10:15+00:00"
 
 
 def test_one_device_masks_to_one_fake_across_summary_and_detail():
@@ -558,3 +607,248 @@ def test_the_delegated_listeners_are_bound_to_static_containers():
     js = script()
     for container in ("list", "applist", "portlist"):
         assert f'$("{container}").onclick' in js, f"no delegated handler for #{container}"
+
+
+# --------------------------------------------------------------------------- #
+# Tabs
+#
+# The page was one long column: reaching the network watch meant a screen and a half of
+# scrolling. It is now five tabs. The rules below are the ones that are invisible at the
+# point they matter — a tab whose panel is missing, a switch that fetches before demo mode
+# is armed, a panel whose `hidden` attribute is overruled by a display: rule.
+# --------------------------------------------------------------------------- #
+TAB_NAMES = ["agents", "apps", "ports", "watch", "history"]
+
+# What each panel must OWN, now that the controls left the shared header.
+PANEL_CONTENTS = {
+    "agents": ("showVendor", "cards", "list", "logwrap"),
+    "apps": ("scanBtn", "applist", "discover"),
+    "ports": ("portverdict", "portcheck", "showSystem", "portlist"),
+    "watch": ("watchmeta", "watchlist"),
+    "history": ("histmeta", "histevents", "histdevices", "histnotifs"),
+}
+
+
+def body() -> str:
+    return PAGE.split("<script>", 1)[0]
+
+
+def panel(name: str) -> str:
+    return body().split(f'id="panel-{name}"', 1)[1].split("</section>", 1)[0]
+
+
+def test_every_tab_has_a_panel_and_every_panel_a_tab():
+    """Compared WHOLE, in both directions and in order. A per-tab check ("each tab's panel
+    exists") passes happily when a panel is added with no tab, or a tab is deleted — the
+    membership is the rule, so the membership is what gets asserted."""
+    js = script()
+    tabs = re.findall(r'data-tab="(\w+)"', body())
+    panels = re.findall(r'id="panel-(\w+)"', body())
+    assert tabs == TAB_NAMES, f"tab buttons are {tabs}"
+    assert panels == TAB_NAMES, f"panels are {panels}"
+    assert 'const TABS = ["agents", "apps", "ports", "watch", "history"];' in js, (
+        "the script's list must agree with the markup — it is what selectTab iterates"
+    )
+    # Agents is the landing tab: it must be the one pre-selected in the STATIC markup, or
+    # the first frame shows a different tab than the one the script is about to select.
+    assert 'id="tab-agents" data-tab="agents" aria-controls="panel-agents" aria-selected="true"' in body()
+
+
+def test_hidden_panels_cannot_be_overridden_by_a_display_rule():
+    """`[hidden]` is a UA rule with the lowest possible weight, and .row/.cards both set
+    display — so without this guard a tab switch sets the attribute and nothing moves. The
+    same trap cost a modal in another project two speculative fixes."""
+    assert re.search(r"\[hidden\]\s*\{\s*display:\s*none\s*!important", PAGE), (
+        "add [hidden] { display: none !important } — the attribute alone loses to any "
+        "display: declaration on the element"
+    )
+
+
+def test_selecting_a_tab_is_visibility_only():
+    """selectTab runs at BOOT, before the demo-mode arming block. If it could fetch, then
+    /?demo=1#history would put an unmasked history request on the very first frame a
+    screen recorder captures — the exact thing demo mode exists to prevent."""
+    js = script()
+    fn = js.split("function selectTab", 1)[1].split("\n}", 1)[0]
+    for forbidden in ("innerHTML", "api(", "fetch(", "loadHistory("):
+        assert forbidden not in fn, f"selectTab must not {forbidden} — it is visibility only"
+    assert ".hidden =" in fn and "historyOpen =" in fn
+
+
+def test_tab_state_lives_in_the_hash_only():
+    """Storage is banned outright in this script (see the demo-mode test), so the hash is
+    the only place a tab can persist — and it makes /#ports a shareable link."""
+    js = script()
+    assert "function fromHash" in js
+    assert js.count('addEventListener("hashchange"') == 1, "one listener, or a switch loops"
+    assert "history.replaceState(" in js, (
+        "replaceState, not location.hash: a tab is a view, so Back should leave the page "
+        "rather than walk back through five tabs"
+    )
+
+
+def test_boot_arms_demo_then_picks_the_tab_then_fetches():
+    """Order is the whole rule. The tab must be applied before the first fetch (so the
+    right panel is showing when data lands) but AFTER masking is armed, and through
+    selectTab — goTab fetches."""
+    js = script()
+    boot = js.split('$("portcheck").oninput = checkPort;', 1)[1]
+    arm, _, rest = boot.partition("loadAll();")
+    assert "selectTab(fromHash())" in arm, "pick the tab before the first fetch"
+    assert arm.index('classList.add("demo")') < arm.index("selectTab(fromHash())"), (
+        "arm demo mode FIRST — selecting #history before that would fetch unmasked"
+    )
+    assert "goTab(" not in arm, "boot must use selectTab: goTab fetches history"
+    assert "loadHistory(" not in arm
+    assert "selectTab(" not in rest
+
+
+def test_switching_to_history_fetches_it_immediately():
+    """History is the one panel the poll skips while hidden, so arriving on it has to
+    fetch — otherwise the tab reads "Loading…" for up to 30 seconds."""
+    js = script()
+    fn = js.split("function goTab", 1)[1].split("\n}", 1)[0]
+    assert "selectTab(name)" in fn and "loadHistory()" in fn
+    assert fn.index("selectTab(name)") < fn.index("loadHistory()")
+    click = js.split('$("tabs").onclick', 1)[1].split("\n", 1)[0]
+    assert "goTab(" in click and "data-tab" in click
+
+
+def test_each_tabs_controls_live_in_its_own_panel():
+    """The old header carried every control for every section; that is what ran it out of
+    room. A control left behind in the header is a control that acts on a panel you cannot
+    see while you are pressing it."""
+    for name, ids in PANEL_CONTENTS.items():
+        markup = panel(name)
+        for el in ids:
+            assert f'id="{el}"' in markup, f'#{el} must live inside the {name} panel'
+    shell = body().split("<section", 1)[0]
+    for global_ctl in ("demoToggle", "refresh", "tabs"):
+        assert f'id="{global_ctl}"' in shell, f"#{global_ctl} is global — it stays in the top bar"
+
+
+def test_the_tablist_follows_the_aria_tabs_pattern():
+    """A tab bar that is only styled like one is a row of buttons to a screen reader, and
+    arrow keys are how the pattern is actually driven."""
+    markup = body()
+    assert 'role="tablist"' in markup
+    for name in TAB_NAMES:
+        assert f'role="tab" id="tab-{name}" data-tab="{name}" aria-controls="panel-{name}"' in markup
+        assert f'role="tabpanel" aria-labelledby="tab-{name}"' in markup
+    js = script()
+    keys = js.split('$("tabs").onkeydown', 1)[1].split("\n};", 1)[0]
+    for key in ("ArrowLeft", "ArrowRight", "Home", "End"):
+        assert key in keys, f"{key} must move between tabs"
+    sel = js.split("function selectTab", 1)[1].split("\n}", 1)[0]
+    assert "aria-selected" in sel and "tabIndex" in sel, (
+        "selection must be announced, and only the selected tab is a tab stop"
+    )
+
+
+def test_tab_counts_are_written_as_text_by_the_renderers():
+    """The counts are what make a hidden panel legible — 3 failed agents, 2 exposed ports.
+    They come from machine-derived data, so they go in as text: setCount is the one writer
+    and it must never reach for innerHTML."""
+    js = script()
+    fn = js.split("function setCount", 1)[1].split("\n}", 1)[0]
+    assert "textContent" in fn and "innerHTML" not in fn
+    for name in TAB_NAMES:
+        assert f'id="count-{name}"' in body()
+    writers = {
+        "agents": "async function load(",
+        "apps": "async function loadApps(",
+        "ports": "async function loadPorts(",
+        "watch": "function renderWatch(",
+        "history": "function renderHistory(",
+    }
+    for name, start in writers.items():
+        renderer = js.split(start, 1)[1].split("\n}", 1)[0]
+        assert f'setCount("{name}"' in renderer, f"{start} must publish the {name} count"
+
+
+def test_the_markup_carries_no_inline_event_handlers():
+    """Every action now rides a data-attribute read by a delegated listener on a static
+    container. The renderers were already held to that; the four hand-written handlers in
+    the static markup were the exception, and an exception is how the rule erodes."""
+    assert not re.search(r'\son\w+="', body()), "bind it in the script instead"
+
+
+def test_watch_event_rows_name_their_severity_in_text():
+    """Severity used to be carried by the colour of an 8px dot and nothing else — unreadable
+    to a screen reader, and the two reds are exactly the pair that colour blindness merges."""
+    js = script()
+    rows = js.split("function evListHTML", 1)[1].split("function toggleEvent", 1)[0]
+    assert '<span class="pill ${dot}">${sev}</span>' in rows
+    for word in ('"alert"', '"notice"', '"log"'):
+        assert word in rows
+
+
+def test_loading_apps_disarms_a_pending_remove():
+    """✕ arms for 3s before it deletes. The 30s poll re-renders inside that window, so the
+    button goes back to reading "✕" while the next click still deletes — a destructive
+    action whose confirmation is invisible. loadPorts already reset its twin."""
+    js = script()
+    fn = js.split("async function loadApps", 1)[1].split("\n}", 1)[0]
+    assert "armedRemove = null" in fn
+
+
+def _tabs_js() -> str:
+    """The self-contained tab block, lifted out of PAGE so it can be RUN."""
+    js = script()
+    block = js.split("// __TABS__", 1)[1].split("\n", 1)[1].split("// __/TABS__", 1)[0]
+    assert "function selectTab(" in block
+    return block
+
+
+def test_tab_switching_actually_toggles_the_right_panel():
+    """Text assertions can see that selectTab mentions `.hidden`; they cannot see whether it
+    hides the right things. So the block is EXECUTED against a stub DOM and the OUTCOME is
+    asserted — which panel is showing, which tab is the tab stop, and that an unknown hash
+    lands somewhere real instead of a blank page."""
+    import json as _json
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    assert node, "node is required to verify tab switching"
+
+    driver = """
+const nodes = {};
+const node = (id) => nodes[id] || (nodes[id] = { id, hidden: false, tabIndex: null, attrs: {},
+  setAttribute(k, v) { this.attrs[k] = String(v); }, getAttribute(k) { return this.attrs[k]; } });
+const document = { getElementById: node };
+const location = { hash: "#ports" };
+const $ = (id) => document.getElementById(id);
+%s
+const snap = () => Object.fromEntries(TABS.map((t) => [t, {
+  hidden: $("panel-" + t).hidden,
+  sel: $("tab-" + t).getAttribute("aria-selected"),
+  ti: $("tab-" + t).tabIndex,
+}]));
+const out = {};
+selectTab(fromHash()); out.ports = snap(); out.openOnPorts = historyOpen; out.current = currentTab;
+location.hash = "#history"; selectTab(fromHash()); out.history = snap(); out.openOnHistory = historyOpen;
+out.junk = (location.hash = "#nope", fromHash());
+out.demo = (location.hash = "#demo", fromHash());
+out.empty = (location.hash = "", fromHash());
+console.log(JSON.stringify(out));
+""" % _tabs_js()
+
+    run = subprocess.run([node, "-e", driver], capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    out = _json.loads(run.stdout)
+
+    for showing, state in (("ports", out["ports"]), ("history", out["history"])):
+        for name, seen in state.items():
+            on = name == showing
+            assert seen["hidden"] is not on, f"{name} visibility wrong while on {showing}"
+            assert seen["sel"] == ("true" if on else "false"), f"{name} aria-selected on {showing}"
+            assert seen["ti"] == (0 if on else -1), f"{name} tabindex on {showing}"
+    assert out["current"] == "ports"
+    # historyOpen is what gates the 30s history re-fetch: wrong here and the tab either
+    # goes stale or every other tab pays for a fetch it never shows.
+    assert out["openOnPorts"] is False and out["openOnHistory"] is True
+    # An unknown hash must land on a real tab. Without the membership check the page would
+    # show five hidden panels and read as broken. "#demo" is demo mode's arming alias, not
+    # a tab, and must fall through the same way.
+    assert out["junk"] == "agents" and out["demo"] == "agents" and out["empty"] == "agents"

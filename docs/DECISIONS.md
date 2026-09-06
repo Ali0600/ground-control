@@ -21,8 +21,51 @@
 - **`_TRANSITION_KINDS` is dead code** — referenced nowhere in `app/` after its tautological
   test was replaced by two behavioural ones. Either make it load-bearing in `observe`'s two
   branches or delete it and move the comment.
+- **A light theme** — the redesign put every colour behind `:root` custom properties, so this
+  is now one `@media (prefers-color-scheme: light)` block redefining ~20 tokens rather than a
+  hunt through the stylesheet. Deferred because the demo GIF only shows one theme and it
+  doubles the visual QA surface. Seam: the token block at the top of `PAGE`'s `<style>`.
 
 ---
+
+## 2026-09-06 — Tabs over one long page
+
+**Fork:** the page stacked four sections in an 880px column, so reaching the network watch
+was a screen and a half of scrolling, and the History sheet gave the page a second navigation
+model on top of that. What replaces the scroll?
+
+- **A) Five tabs (Agents · Apps · Ports · Watch · History), all panels mounted, tab in the
+  URL hash.** One model for everything, the header stops competing for room, and each panel
+  can carry its own controls.
+- **B) Stacked sections with a sticky jump-nav.** Everything stays visible at once and no
+  state is added — but the scroll is the complaint, and a jump-nav only automates it.
+- **C) Keep the sheet and make the four sections collapsible.** Cheapest diff, but it leaves
+  two navigation models and makes "where is that thing" depend on what you collapsed.
+
+**Chosen: A**, with the sheet retired into the fifth tab (the user's call on both). Panels are
+mounted and every renderer keeps polling: the sections are coupled — the log panel parks under
+a row in two different lists, the watch card cross-checks the port scan, and the `(N!)` title
+badge comes from a fetch no visible panel owns — so unmounting the hidden ones would break four
+features to save four requests.
+
+- B — *rejected* — it keeps the scroll, which was the whole complaint.
+- C — *rejected* — two ways to reach one thing is the bug the sheet itself was introduced to
+  fix (it replaced an in-section toggle for the same reason).
+
+**Sub-fork: where does the current tab live?**
+
+- **The URL hash (chosen).** Shareable (`/#ports`), survives a reload, costs nothing at rest.
+- `localStorage` — *rejected* — storage is banned outright in this script, deliberately: it is
+  what stops demo mode surviving a reload and showing someone else's machine as if it were
+  yours. One exception erodes the rule.
+- Nothing at all — *rejected* — a reload dropping you back on Agents is the kind of small
+  friction that makes a dashboard feel disposable.
+
+`history.replaceState` rather than assigning `location.hash`, so Back leaves the dashboard
+instead of walking through five tabs. **Revisit hook:** `goTab` in `PAGE` is the single
+runtime path; every switch — click, arrow keys, hashchange, an event card's View log — goes
+through it.
+
 
 ## 2026-09-05 — Refusing cross-origin writes without adding auth
 

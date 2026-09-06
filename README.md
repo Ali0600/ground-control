@@ -25,6 +25,10 @@ deterministic and read-honest. It runs **on** launchd (each app becomes a manage
 and Ground Control self-hosts as one) — the repo was formerly `launchd-dashboard`.
 
 ## Highlights
+- **Five tabs in a sticky bar — Agents · Apps · Ports · Watch · History** — each with a live
+  count, so you can see that three agents failed or four ports are exposed without opening
+  the tab. The tab rides in the URL (`/#ports`), so a reload or a bookmark lands where you
+  left off.
 - **Auto-discovery** of user LaunchAgents (`~/Library/LaunchAgents`, `/Library/LaunchAgents`),
   with vendor jobs (Apple/Google/etc.) hidden by default.
 - **Live status** per agent — running / idle / unloaded, PID, and **last exit code**
@@ -56,7 +60,7 @@ and Ground Control self-hosts as one) — the repo was formerly `launchd-dashboa
 - **Scan for projects**: one click finds launchable git repos across your project roots and
   writes their entries for you — including repairing the path of a project you've **moved**.
 - **Network watch**: the always-on agent diffs the port scan every 30s and **alerts** —
-  native macOS banners plus an in-page alerts section and a `(N!)` title badge — when a
+  native macOS banners plus the Watch tab and a `(N!)` title badge — when a
   **new process starts listening**, a listener **flips from loopback to LAN-exposed**, or
   **another device actually connects** to one of your servers (your own Wi-Fi devices are
   distinguished from public internet addresses). One tap acknowledges an alert forever;
@@ -69,10 +73,10 @@ and Ground Control self-hosts as one) — the repo was formerly `launchd-dashboa
   of **your launchd agents fails** — a nonzero exit with nothing running — which is the
   class of silent failure that let a weekly job die unnoticed for eleven days. A
   dashboard-initiated stop/restart is never mistaken for a crash, and recovery clears the
-  alert on its own. The **Network History** button in the page header opens a sheet with
+  alert on its own. The **History** tab holds
   the full event log *and* every banner the agent tried to send, each marked **sent** or
   **failed** — so a broken notification channel (or a missed banner) is itself visible, not
-  lost the moment it scrolls off your screen. **Click any event** (in the sheet or the live
+  lost the moment it scrolls off your screen. **Click any event** (in History or the Watch
   tail) to expand a detail card: the full command line of a new listener plus whether it's
   *still* listening right now, the remote endpoint and resolved device name of a connection,
   or an agent's exit code, schedule, and a one-click jump to its log.
@@ -81,7 +85,7 @@ and Ground Control self-hosts as one) — the repo was formerly `launchd-dashboa
   last seen, and how many separate times — so a card says "last seen listening 2h ago"
   or "connected 14×", not just "gone"); a **run ledger** per launchd agent (every run it
   detects, with the exit code, answering "has this job actually run every Sunday?"); a
-  **devices roster** in the History sheet listing every machine that ever connected to
+  **devices roster** in the History tab listing every machine that ever connected to
   your services, with the ports it touched; and an **append-only `netwatch.log.jsonl`**
   archive, because the in-memory rings are capped and a busy week would otherwise erase
   an earlier one. The archive is never trimmed — `grep`/`jq` it.
@@ -231,8 +235,8 @@ live machine.
 
 ## Experience Gained
 - Designed and built a **self-hosted observability and control plane** for a developer
-  machine — a FastAPI service across **21 HTTP routes** plus a **zero-dependency, 44 KB
-  web UI** (no framework, no build step) on **two runtime dependencies** — that inventories
+  machine — a FastAPI service across **21 HTTP routes** plus a **zero-dependency, 54 KB
+  web UI** (five tabs, no framework, no build step) on **two runtime dependencies** — that inventories
   scheduled jobs, launches dev servers as managed services, attributes every listening port
   and watches the network, self-hosting as its own `launchd` agent.
 - Integrated directly with **`launchd` internals** (plist parsing, `launchctl` state

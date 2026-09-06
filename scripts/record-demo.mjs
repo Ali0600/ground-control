@@ -70,7 +70,12 @@ async function caption(page, text) {
 }
 
 /** One scene: set the caption, let the UI settle, capture one frame, and record the
- *  visible text so the privacy gate can assert over exactly what was filmed. */
+ *  visible text so the privacy gate can assert over exactly what was filmed.
+ *
+ *  innerText omits hidden subtrees, so each scene's recorded text is the VISIBLE tab only
+ *  — which is exactly what was filmed. The ten scenes together still cover every panel
+ *  (agents 1/4/10, apps 2/3, ports 5, watch 6, history 7-9); cutting a scene must keep
+ *  that union, or a panel stops being scanned for private data. */
 async function scene(page, text, { before, hold, settle = 700 } = {}) {
   if (before) await before();
   await caption(page, text);
@@ -126,6 +131,15 @@ const main = async () => {
       document.querySelector(s).scrollIntoView({ block: "center", behavior: "instant" });
     }, sel);
 
+    // The page is five tabs now, so most scenes SWITCH rather than scroll — and a
+    // scrollIntoView on a hidden panel's child silently does nothing, which would have
+    // filmed ten frames of the Agents tab. Wait for the panel, not for the click: the
+    // click only flips visibility, and on History it is also what triggers the fetch.
+    const tab = async (name) => {
+      await page.click(`#tab-${name}`);
+      await page.waitForSelector(`#panel-${name}`, { state: "visible" });
+    };
+
     console.log("recording…");
 
     await scene(page, "Every scheduled job and dev server, in one place");
@@ -133,7 +147,7 @@ const main = async () => {
     // The one scene that shows a CHANGE rather than a still, so it gets two frames:
     // the row as "stopped" (brief), then as "running" after the click.
     await scene(page, "Start a dev server without hunting for a terminal", {
-      before: () => scrollTo("#applist"),
+      before: () => tab("apps"),
       hold: 1.6,
     });
     await scene(page, "One click — it starts as a real launchd agent", {
@@ -150,25 +164,27 @@ const main = async () => {
     });
 
     await scene(page, "Status, exit code and logs for every job", {
-      before: () => scrollTo("#list"),
+      before: () => tab("agents"),
     });
 
     // Merged: the port attribution and the "exposed" flag are one idea — who holds a
     // port, and whether it is reachable from outside this machine.
     await scene(page, "Which project owns :3000 — and what's exposed", {
-      before: () => scrollTo("#portlist"),
+      before: () => tab("ports"),
     });
 
     // Merged: "it watches" + "here is what it watches for" were two captions over the
     // same screen.
     await scene(page, "It alerts on new listeners, LAN exposure and failed jobs", {
-      before: () => scrollTo("#watchlist"),
+      before: () => tab("watch"),
     });
 
     await scene(page, "Network History: every event, and every alert it sent", {
       before: async () => {
-        await page.click("#histBtn");
-        await page.waitForSelector("#histsheet.open");
+        await tab("history");
+        // Arriving on the tab is what fetches the ring — wait for a row, or the frame
+        // shows "Loading…".
+        await page.waitForSelector("#histevents .evrow");
         await page.waitForTimeout(600);
       },
     });
@@ -186,8 +202,7 @@ const main = async () => {
         await page.waitForSelector("#histevents .evcard");
         // An expanded card is tall; unscrolled it hangs off the bottom of the frame
         // and the run ledger — the whole point of the scene — never appears.
-        await page.evaluate(() => document.querySelector("#histevents .evcard")
-          .scrollIntoView({ block: "center", behavior: "instant" }));
+        await scrollTo("#histevents .evcard");
       },
       // the card carries the run ledger — worth an extra beat
       hold: 4.6,
@@ -196,14 +211,13 @@ const main = async () => {
     await scene(page, "Every device that ever connected to your machine", {
       before: async () => {
         await page.locator("#histevents .evrow").first().click();  // collapse
-        await page.evaluate(() => document.getElementById("histdevices")
-          .scrollIntoView({ block: "center", behavior: "instant" }));
+        await scrollTo("#histdevices");
       },
     });
 
     await scene(page, "Demo mode masks IPs, device names and paths for sharing", {
       before: async () => {
-        await page.click("#sheetback");
+        await tab("agents");
         await page.waitForTimeout(400);
         await page.evaluate(() => window.scrollTo(0, 0));
       },
