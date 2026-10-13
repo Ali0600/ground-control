@@ -11,7 +11,7 @@ are **Ground Control**; `APP_NAME` in `app/main.py` is the single source for the
 the FastAPI title and every banner title. Three things deliberately KEEP the old name and
 must not be "tidied": the agent labels (`com.launchddash.*` — a label is an identity that
 installed plists and running jobs refer to), this machine's checkout path
-(`~/launchd-dashboard`, which the installed server plist points at absolutely), and the
+(`~/projects/automation/launchd-dashboard`, which the installed server plist points at absolutely), and the
 historical entries in `docs/DECISIONS.md` / `docs/learnings.md`, which are records.
 
 ## Layout
