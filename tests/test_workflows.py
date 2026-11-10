@@ -52,6 +52,49 @@ def test_the_required_check_fails_closed_when_the_matrix_fails():
     assert "success" in body, "the gate must assert the matrix result, not just run"
 
 
+def _gate() -> "tuple[str, dict]":
+    jobs = workflow()["jobs"]
+    return next((key, job) for key, job in jobs.items() if job.get("name") == REQUIRED_CHECK)
+
+
+def test_the_gate_needs_every_other_job():
+    """The gate is the ONLY required check, so a job it does not `need` can go red and
+    still merge. The macOS app job arrived after the gate did — the newest member of a
+    hand-kept list is the one that gets missed — so the expected set is derived from the
+    workflow itself, never listed here."""
+    gate_id, gate = _gate()
+    needs = gate.get("needs") or []
+    needs = [needs] if isinstance(needs, str) else needs
+    others = sorted(key for key in workflow()["jobs"] if key != gate_id)
+    assert sorted(needs) == others, f"the gate needs {sorted(needs)}, but the jobs are {others}"
+
+
+def test_the_gate_asserts_each_needed_jobs_result():
+    """Needing a job only orders it; the gate must also READ its result and fail on
+    anything but success, or a red job behind `if: always()` still passes the gate."""
+    _, gate = _gate()
+    needs = gate.get("needs") or []
+    needs = [needs] if isinstance(needs, str) else needs
+    env_values = [str(v) for step in gate["steps"] for v in (step.get("env") or {}).values()]
+    for job in needs:
+        assert any(f"needs.{job}.result" in v for v in env_values), (
+            f"the gate never reads needs.{job}.result"
+        )
+    body = " ".join(step.get("run", "") for step in gate["steps"])
+    assert body.count('= "success"') >= len(needs), "every needed result must be compared to success"
+
+
+def test_the_mac_app_is_tested_and_built_on_macos():
+    """The app is AppKit + WebKit, so only a macOS runner can build it; its tests drive a
+    real web view and read files across the repo. Both steps must stay in the job the gate
+    waits for."""
+    mac_jobs = [j for j in workflow()["jobs"].values() if str(j.get("runs-on", "")).startswith("macos")]
+    assert mac_jobs, "no job runs on macOS — nothing builds or tests the app"
+    runs = " ".join(step.get("run", "") for job in mac_jobs for step in job.get("steps", []))
+    assert "swift test --package-path macos" in runs
+    assert "macos/build.sh" in runs
+
+
 def test_the_matrix_still_runs_the_lowest_supported_python():
     """run.sh builds the dev venv from macOS's system python3 (3.9) and ruff targets
     py39, but for a long time CI ran only 3.12 — so 3.10+ syntax that ruff's selected

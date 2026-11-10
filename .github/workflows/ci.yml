@@ -57,23 +57,44 @@ jobs:
         run: pytest -q tests/test_privacy.py
       - run: pytest -q --cov=app --cov-report=term-missing --cov-fail-under=86
 
+  # The native app in macos/ (Swift: AppKit + WebKit). It runs on every PR, not only ones
+  # touching macos/: its contract tests read app/main.py (the tab list, the hosts the
+  # server accepts, /api/watch's `active`), run.sh and the plist template, so a
+  # Python-side rename can break the app without touching a Swift file.
+  macos-app:
+    name: macOS app
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Swift tests (the web view is driven off-screen)
+        run: swift test --package-path macos
+      - name: Build, sign and verify the app bundle
+        run: macos/build.sh
+
   # The name below is the branch ruleset's REQUIRED CHECK, so it must stay stable no
   # matter how the matrix above changes. Adding the 3.9/3.12 matrix renamed the only
   # job to "Lint + test (py3.9)" / "(py3.12)", so the required "Lint + test" became a
   # check that could never report again — every PR unmergeable, with nothing red to
   # explain why. An aggregate gate decouples the required name from the matrix shape.
+  # It needs EVERY other job: a job left out could fail without blocking a merge
+  # (tests/test_workflows.py derives that set from this file).
   gate:
     name: Lint + test
-    needs: test
+    needs: [test, macos-app]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # `always()` matters: without it a failed matrix leaves this job SKIPPED, and a
     # skipped required check does not block a merge. Fail closed, and say why.
     if: always()
     steps:
-      - name: Every matrix job must have succeeded
+      - name: Every required job must have succeeded
         env:
-          RESULT: ${{ needs.test.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          MACOS_APP_RESULT: ${{ needs.macos-app.result }}
         run: |
-          echo "matrix result: $RESULT"
-          test "$RESULT" = "success"
+          echo "python matrix: $TEST_RESULT · macOS app: $MACOS_APP_RESULT"
+          test "$TEST_RESULT" = "success"
+          test "$MACOS_APP_RESULT" = "success"

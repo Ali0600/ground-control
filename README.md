@@ -106,6 +106,9 @@ Control runs as one itself. The repo was formerly `launchd-dashboard`.
   review the footage before you publish it.
 - **Self-hostable**: ships a launchd plist template, so the dashboard runs as *its own*
   agent and shows up in its own list.
+- **A native Mac app**: the dashboard in its own window, with a Dock badge for active
+  alerts and a screen that explains — and fixes — a server that has stopped answering.
+  See [Mac app](#mac-app).
 
 ## Quickstart
 
@@ -142,6 +145,42 @@ holds it. The `sed` above fills in wherever you cloned, so the template works fr
 path. Just keep it out of the TCC-protected folders (see Quickstart). The agent label stays
 `com.launchddash.server`. A label is an identity that running jobs and installed plists
 refer to, so renaming it would only cause churn.
+
+## Mac app
+
+`macos/` holds a native Mac app for the dashboard: its own window, Dock icon and menus,
+written in Swift (AppKit + WebKit) with no Xcode project. It is a **client** of the agent
+above, not a second server, so the agent keeps watching and alerting whether or not the app
+is open.
+
+```bash
+macos/build.sh --install       # builds, signs and checks it → ~/Applications/Ground Control.app
+```
+
+It needs macOS 13 or later and Xcode or the Command Line Tools (Swift 5.9+). The build is
+signed ad hoc: it runs on the Mac that built it, but isn't notarized for handing to others.
+
+What it adds over a browser tab:
+- **A Dock badge with the number of active alerts** — the same count as the page's `(N!)`
+  title. It reads **`off`** when the server stops answering, which is the one failure the
+  server cannot report about itself, and **`?`** when the server answers with something
+  the app can't read. It never goes blank for "I couldn't tell".
+- **A native screen when the server is down**, saying what launchd knows and offering the
+  fix: start or restart the agent, load one that is installed but not loaded, open the
+  setup guide, or name a port mismatch. It checks again every few seconds and puts the
+  dashboard back by itself.
+- **Links leave the window.** The ↗ open buttons and any outside link go to your default
+  browser; only `http`/`https` addresses are ever handed on.
+- **⌘1–⌘5** switch tabs and **⌘R** reloads. The **Server** menu has Restart Server, Show
+  Server Log (in Console) and Open in Browser. Closing the window keeps the app and its
+  badge running; click the Dock icon to bring it back.
+
+If the dashboard runs on another port:
+`defaults write com.launchddash.groundcontrol ServerURL http://127.0.0.1:9000`. Only this
+Mac's own addresses are accepted; anything else is refused, with a warning that says why.
+
+Tests: `swift test --package-path macos`. CI runs them on a macOS runner as part of the
+required check, including a suite that drives the window's real web view off-screen.
 
 ## API
 | Method | Path | Purpose |
@@ -241,13 +280,16 @@ live machine.
 
 ## Experience Gained
 - Designed and built a **self-hosted observability and control plane** for a developer
-  machine: a FastAPI service with **21 HTTP routes** plus a **zero-dependency, 54 KB
-  web UI** (five tabs, no framework, no build step), on **two runtime dependencies**. It lists
-  scheduled jobs, launches dev servers as managed services, links every listening port to
-  its owner and watches the network, and hosts itself as its own `launchd` agent.
+  machine: a FastAPI service with **21 HTTP routes**, a **zero-dependency, 54 KB web UI**
+  (five tabs, no framework, no build step) on **two runtime dependencies**, and a **native
+  macOS client** (Swift: AppKit + WebKit) that a script builds, signs and verifies with no
+  Xcode project, gated in CI on a macOS runner by **58 tests**, 10 of them driving a real web
+  view off-screen. It lists scheduled jobs, launches dev servers as managed services, links
+  every listening port to its owner and watches the network, and hosts itself as its own
+  `launchd` agent.
 - Worked directly with **`launchd` internals** (plist parsing, `launchctl` state
   inspection, job control in the per-user GUI domain) behind a **deterministic,
-  fixture-tested core**: **299 tests at 88% coverage against a ratcheted CI floor** (a
+  fixture-tested core**: **316 tests at 88% coverage against a ratcheted CI floor** (a
   floor that can only go up), with zero live system calls, so a macOS-only tool's suite runs
   green on Linux CI in under a minute. Every guard is proven to fail first by an automated
   sabotage harness (**23 mutations, each restored from a byte copy and verified
