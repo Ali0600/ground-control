@@ -1,5 +1,6 @@
 import AppKit
 import GroundControlCore
+import os
 
 /// Wires the window, the server poll and the launchd agent together, and owns the menus.
 @MainActor
@@ -21,7 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             UserDefaults.standard.string(forKey: ServerEndpoint.settingKey))
         endpoint = resolved.endpoint
         endpointWarning = resolved.warning
-        if let warning = resolved.warning { NSLog("Ground Control: %@", warning) }
+        if let warning = resolved.warning { Log.app.warning("\(warning, privacy: .public)") }
         monitor = ServerMonitor(endpoint: endpoint)
         super.init()
     }

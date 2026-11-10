@@ -1,6 +1,7 @@
 import AppKit
 import GroundControlCore
 import WebKit
+import os
 
 /// The one window: the dashboard in a web view, with the native offline screen in front
 /// of it whenever the page is not showing.
@@ -113,7 +114,7 @@ final class DashboardWindowController: NSWindowController, WKNavigationDelegate,
 
     private func show(_ screen: DashboardScreen) {
         // Logged on change only, so Console tells the story of an outage line by line.
-        if screen != self.screen { NSLog("Ground Control: screen → %@", "\(screen)") }
+        if screen != self.screen { Log.app.notice("screen → \(String(describing: screen), privacy: .public)") }
         self.screen = screen
         webView.isHidden = screen != .dashboard
         offlineView.isHidden = screen == .dashboard
@@ -128,9 +129,10 @@ final class DashboardWindowController: NSWindowController, WKNavigationDelegate,
         guard screen == .dashboard else { return }
         webView.evaluateJavaScript(tab.activationScript) { result, error in
             if let error {
-                NSLog("Ground Control: switching to %@ failed: %@", tab.rawValue, error.localizedDescription)
+                Log.app.error(
+                    "switching to \(tab.rawValue, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
             } else if (result as? Bool) != true {
-                NSLog("Ground Control: the page has no tab-%@ button to click", tab.rawValue)
+                Log.app.error("the page has no tab-\(tab.rawValue, privacy: .public) button to click")
             }
         }
     }
@@ -175,7 +177,7 @@ final class DashboardWindowController: NSWindowController, WKNavigationDelegate,
     /// The page's renderer is a separate process; if it dies (memory pressure, a crash)
     /// the view goes blank and stays blank unless someone reloads it.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        NSLog("Ground Control: the page's web content process exited; reloading")
+        Log.app.notice("the page's web content process exited; reloading")
         loadDashboard()
     }
 
@@ -245,11 +247,11 @@ final class DashboardWindowController: NSWindowController, WKNavigationDelegate,
             return .allow
         case .openInBrowser(let url):
             if !openExternally(url) {
-                NSLog("Ground Control: could not open %@ in the browser", url.absoluteString)
+                Log.app.error("could not open \(url.absoluteString, privacy: .public) in the browser")
             }
             return .cancel
         case .refuse(let reason):
-            NSLog("Ground Control: refused a navigation: %@", reason)
+            Log.app.notice("refused a navigation: \(reason, privacy: .public)")
             return .cancel
         }
     }

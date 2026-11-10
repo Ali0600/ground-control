@@ -3,9 +3,9 @@
 //
 //   GroundControlIcon <out.iconset>
 //
-// Original artwork drawn with Core Graphics, on purpose: Apple's SF Symbols licence does
-// not allow the symbols in app icons. Pure CoreGraphics + ImageIO, so it also runs on a
-// headless CI runner.
+// Original artwork drawn with Core Graphics, so the icon carries no third-party art and
+// no licence questions. Pure CoreGraphics + ImageIO, so it also runs on a headless CI
+// runner.
 import CoreGraphics
 import Foundation
 import ImageIO

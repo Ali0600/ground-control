@@ -281,3 +281,57 @@ visible one — held DOM nodes, shared caches, counters, anything writing the ti
 Keep the switch a pure visibility change, guard `hidden` against your own CSS, and keep any
 fetching in a separate function so the one the boot path calls provably cannot reach the
 network.
+
+## A web view drops everything the browser used to do for the page
+
+`WKWebView` is the browser engine without the browser around it. `window.open`,
+`target="_blank"` and `alert`/`confirm`/`prompt` all go to delegate methods, and with no
+delegate they do nothing: no window opens, and `confirm()` quietly returns `false`.
+
+**Why it came up:** the Mac app shows the dashboard in a `WKWebView`. Its per-port "↗ open"
+buttons call `window.open(…, "_blank")`, so without a `WKUIDelegate` they would have stopped
+working the moment the page moved out of a browser — with no error anywhere.
+
+**Takeaway:** before embedding a page in a native web view, list everything it borrows from the
+browser (new windows, dialogs, file pickers, downloads) and give each its delegate method —
+then test that the engine actually calls it.
+
+## A Swift delegate method whose signature drifts compiles — and is never called
+
+Apple frameworks call optional delegate methods by Objective-C selector. When a Swift method's
+labels or types stop matching the protocol requirement, Swift no longer treats it as that
+requirement: the build passes with one warning ("nearly matches optional requirement") and the
+framework simply never calls the method.
+
+**Why it came up:** a deliberate sabotage renamed one label of
+`webView(_:createWebViewWith:for:windowFeatures:)`. The build stayed green apart from that
+warning, and `window.open` silently went nowhere. `DelegateWiringTests` checks
+`instancesRespond(to:)` for each selector WebKit sends, and it caught the sabotage.
+
+**Takeaway:** pin optional `@objc` delegate methods by their Objective-C selector in a test; a
+clean compile is no evidence the system will call them.
+
+## A Mac app bundle is a folder a script can assemble
+
+An `.app` is a directory: `Contents/MacOS/<executable>`, `Contents/Info.plist`,
+`Contents/Resources/`. SwiftPM builds the executable, `iconutil` turns a folder of PNGs into the
+`.icns`, and `codesign --sign -` signs it ad hoc. No Xcode project is involved.
+
+**Why it came up:** this repo had no Xcode project to maintain and a Linux-first CI.
+`macos/build.sh` builds, signs and checks the bundle in about 80 lines, and the same script runs
+on the macOS CI runner.
+
+**Takeaway:** for a small native app, a script over `swift build` keeps the whole build
+reviewable as text. Verify the finished bundle (its plist keys, signature and executable), not
+the inputs it was made from.
+
+## Log a Mac app through `os.Logger`, and check the line arrives where you will look
+
+**Why it came up:** the app first logged its screen changes with `NSLog`. While it was launched
+with `open`, searching the unified log by process and by message text found none of them, so
+the outage test had no trail to read. The same events logged through
+`Logger(subsystem:category:)` appeared at once, filterable by subsystem. A `Logger` message
+redacts interpolated values as `<private>` unless they are marked `privacy: .public`.
+
+**Takeaway:** log through `os.Logger` with a subsystem, mark what is safe to show as public, and
+confirm a diagnostic actually lands in `log show` before a comment promises it does.

@@ -25,6 +25,10 @@ historical entries in `docs/DECISIONS.md` / `docs/learnings.md`, which are recor
 - `app/main.py` — routes **plus the entire UI** as one `PAGE` string (HTML + inline JS),
   and the background watcher loop (lifespan task).
 - `tests/` — pytest, fixtures only; no live `launchctl`/`lsof` in tests.
+- `macos/` — the native Mac app (SwiftPM, no Xcode project). `Sources/GroundControlCore` holds
+  every decision, Foundation only (link policy, Dock badge, launchctl argv, what a poll does to
+  the window); `Sources/GroundControl` is the AppKit + WebKit shell; `Sources/GroundControlIcon`
+  draws the icon at build time; `build.sh` assembles, ad-hoc signs and verifies the `.app`.
 
 ## Common commands
 - Run: `./run.sh` (creates `.venv` on first run, serves :8787). It self-hosts as the agent
@@ -33,6 +37,9 @@ historical entries in `docs/DECISIONS.md` / `docs/learnings.md`, which are recor
 - Tests: `.venv/bin/python -m pytest -q` · Lint: `.venv/bin/ruff check .`
 - The UI is a Python string, so there's no JS runner: syntax-check it with
   `python -c "from app.main import PAGE"` → extract `<script>` → `node --check`.
+- Mac app: `macos/build.sh` (→ `macos/build/Ground Control.app`; `--install` copies it to
+  `~/Applications`) · tests: `swift test --package-path macos` · its log:
+  `log show --last 10m --predicate 'subsystem == "com.launchddash.groundcontrol"'`.
 
 ## Workflow
 - **Branch → PR → green → squash-merge.** `main` is protected by rulesets (required check
@@ -214,6 +221,36 @@ historical entries in `docs/DECISIONS.md` / `docs/learnings.md`, which are recor
   `fastapi>=0.129` / `uvicorn>=0.40` / `pytest>=9` need ≥3.10 and are ignored in `dependabot.yml`;
   CI runs 3.12 and cannot catch this — dry-run any floor bump on the 3.9 venv. PRs also run the
   user's own [preflight](https://github.com/Ali0600/preflight) action with `python-version: 3.9`.
+
+## Mac app (`macos/`)
+
+- **A client of `com.launchddash.server`, never a second server.** It polls `/api/watch` (the
+  Dock badge, and noticing an outage) and touches the agent only through `launchctl` —
+  `kickstart`, `kickstart -k`, `bootstrap` — with argv built from constants in `ServerAgent`.
+- **Renaming things on the Python side can break the app.** `RepoContractTests` reads
+  `const TABS` and the `tab-<name>` button ids, `allowed_hosts`, `api_watch`'s `"active"` list
+  and the page's `w.active.length`, `run.sh`'s `PORT`, the plist template's Label / `--port` /
+  `StandardOutPath`, and the README heading the setup-guide link points at. Change both sides
+  in one PR — the macOS job is inside the required gate, and the gate must `need` every job
+  (`test_the_gate_needs_every_other_job` derives that set from `ci.yml`).
+- **WebKit finds the delegate methods by Objective-C selector.** A Swift signature that drifts
+  (a renamed label, a closure type a new SDK changed) compiles with only a "nearly matches
+  optional requirement" warning and is then never called — `window.open` silently goes
+  nowhere. `DelegateWiringTests` checks the selectors WebKit actually sends.
+- **Every new window goes to the default browser, and only `http(s)` ever reaches
+  `NSWorkspace.open`** (`NavigationPolicy`). The page renders command lines and repo names; if
+  an injection ever got past `esc()`, it must not be able to open a `file:` or custom-scheme
+  URL. `WebViewIntegrationTests` drives a real web view off-screen with only the browser
+  hand-off and the dialog presentation stubbed, so it opens nothing on the machine.
+- **The window is never left blank or spinning.** `HealthReaction.to` decides what each poll
+  result does on each screen: two missed polls before a working page is replaced, a start or
+  restart gets a 30 s fast-poll window, and a server that never comes back ends on the offline
+  screen. Add a screen, add its branch there.
+- **Log through `Log.app` (`os.Logger`), marking values `privacy: .public`.** `NSLog` lines from
+  the Finder-launched app never showed up in `log show`.
+- **Checking it without driving its window:** point it at a stand-in server with
+  `-ServerURL http://127.0.0.1:<port>` (loopback only) and read what arrives; read the Dock
+  badge with `lsappinfo info -only StatusLabel -app com.launchddash.groundcontrol`.
 
 ## Security invariants
 

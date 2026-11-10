@@ -2,6 +2,12 @@
 
 ## Backlog — alternatives worth trying later
 
+- **A menu bar item for the Mac app** — the active-alert count in the menu bar, beside the
+  window rather than instead of it. Seam: `ServerMonitor.onUpdate` already hands the count to
+  `macos/Sources/GroundControl/AppDelegate.swift`; add an `NSStatusItem` there.
+- **A notarized, universal Mac app built by CI** — a DMG on GitHub Releases, so the app can be
+  handed to someone else. Seam: the signing step in `macos/build.sh` plus a release workflow;
+  needs a Developer ID certificate as a repository secret.
 - **All 11 demo scenes at full pacing (~40s)** — if scenes are added back and the length is
   acceptable. Holds come from `readingTime()` in `scripts/record-demo.mjs`.
 - **State robustness (audit PR 4, not started)** — a corrupt `netwatch.json` silently
@@ -25,6 +31,47 @@
   is now one `@media (prefers-color-scheme: light)` block redefining ~20 tokens rather than a
   hunt through the stylesheet. Deferred because the demo GIF only shows one theme and it
   doubles the visual QA surface. Seam: the token block at the top of `PAGE`'s `<style>`.
+
+---
+
+## 2026-11-10 — What kind of Mac app
+
+**Fork:** the user asked for "a macOS app" for the dashboard and named no approach, so the
+options below were weighed and the choice made by the agent, not the user. Revisit freely.
+
+- **A) A native Swift shell — AppKit + `WKWebView`, built by SwiftPM and a script — that is a
+  client of the existing agent.** About 1.4 MB, no new dependency for the server, and native parts
+  where a browser tab can't help: a Dock badge, a screen for "the server is down" that can
+  start it, outside links handed to the real browser.
+- **B) Bundle the Python server inside the app (py2app / pywebview).** One thing to install —
+  but the app would own a second server fighting the agent for `:8787`, the network watch would
+  stop whenever the app quit, and a two-dependency server would gain a GUI toolkit.
+- **C) Electron or Tauri.** Cross-platform, but the tool is macOS-only by nature (launchd,
+  `lsof`), and they add Chromium (~150 MB) or a Rust toolchain to show one local page; Tauri
+  renders through the same WebKit anyway.
+- **D) Safari's "Add to Dock" web app.** No code at all — but nothing native: no way to start
+  or restart the agent at the moment the page is unreachable, and a badge would need page
+  changes for the Badging API.
+- **E) A menu-bar-only app (`LSUIElement`) with a popover.** Suits an always-on monitor, but the
+  dashboard is five dense tabs, which want a real window.
+
+**Chosen: A.**
+
+- B — *rejected* — a second server undermines the agent the whole tool is built around.
+- C — *rejected* — a browser runtime to wrap the browser engine macOS already ships.
+- D — *rejected* — "the server is down" is exactly when a native screen is needed.
+- E — *deferred — worth trying* as an addition beside the window, not a replacement. Revisit
+  hook: `ServerMonitor.onUpdate` already delivers the count to `AppDelegate`.
+
+**Sub-fork: signing.** Ad hoc (`codesign --sign -`), chosen: it runs on the Mac that built it
+and needs no Apple Developer account. A Developer ID–signed, notarized, universal build
+published by CI is *deferred — worth trying* (see Backlog); it plugs in at `build.sh`'s
+signing step.
+
+**Sub-fork: the icon.** Drawn by code at build time (`GroundControlIcon`), chosen over a
+committed `.icns`: a committed build artifact needs a drift check, and PNG output isn't
+guaranteed byte-identical across macOS releases. Revisit if a designed icon arrives — macOS
+26's Icon Composer `.icon` format would replace the generator.
 
 ---
 
