@@ -82,25 +82,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     private func healthChanged(_ health: ServerHealth) {
         NSApp.dockTile.badgeLabel = health.badgeLabel
-        switch health {
-        case .offline(let reason):
-            lastFailure = reason
-            switch dashboard.screen {
-            case .dashboard:
-                // One missed poll can be a busy server; two in a row is a server that left.
-                if monitor.offlineStreak >= 2 { showUnreachable() }
-            case .unreachable:
-                showUnreachable() // re-checks the agent: it may have been fixed meanwhile
-            case .starting:
-                // Give a start or restart its fast-poll window before calling it failed.
-                if !monitor.isPollingFast && !actionInFlight { showUnreachable() }
-            case .connecting:
-                break // the page load in flight will report for itself
-            }
-        case .online, .unexpected:
-            if dashboard.screen != .dashboard && !dashboard.isLoading && !actionInFlight {
-                dashboard.loadDashboard()
-            }
+        if case .offline(let reason) = health { lastFailure = reason }
+        let state = WindowState(
+            screen: dashboard.screen, isLoading: dashboard.isLoading, actionInFlight: actionInFlight,
+            offlineStreak: monitor.offlineStreak, isPollingFast: monitor.isPollingFast)
+        switch HealthReaction.to(health, in: state) {
+        case .none: break
+        case .showUnreachable: showUnreachable()
+        case .loadDashboard: dashboard.loadDashboard()
         }
     }
 

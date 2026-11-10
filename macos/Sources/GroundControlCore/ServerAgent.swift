@@ -85,7 +85,7 @@ public struct AgentSnapshot: Equatable {
             guard line.hasPrefix("\t"), !line.hasPrefix("\t\t") else { continue }
             let body = line.dropFirst()
             guard let eq = body.range(of: " = ") else { continue }
-            let key = String(body[..<eq.lowerBound])
+            let key = body[..<eq.lowerBound].trimmingCharacters(in: .whitespaces)
             let value = String(body[eq.upperBound...]).trimmingCharacters(in: .whitespaces)
             switch key {
             case "state" where snapshot.state == nil: snapshot.state = value

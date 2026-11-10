@@ -6,23 +6,12 @@ import WebKit
 /// of it whenever the page is not showing.
 @MainActor
 final class DashboardWindowController: NSWindowController, WKNavigationDelegate, WKUIDelegate {
-    enum Screen: Equatable {
-        /// Loading the page (first launch, or after an outage).
-        case connecting
-        /// The page is up.
-        case dashboard
-        /// Nothing answered; the offline screen explains and offers a fix.
-        case unreachable
-        /// A start or restart is under way.
-        case starting
-    }
-
     private static let zoomKey = "PageZoom"
 
     let endpoint: ServerEndpoint
     let webView: WKWebView
     let offlineView = OfflineView(frame: .zero)
-    private(set) var screen: Screen = .connecting
+    private(set) var screen: DashboardScreen = .connecting
     private(set) var isLoading = false
     /// Why a load failed; the app shows it and decides what happens next.
     var onLoadFailed: ((String) -> Void)?
@@ -122,7 +111,7 @@ final class DashboardWindowController: NSWindowController, WKNavigationDelegate,
         show(.starting)
     }
 
-    private func show(_ screen: Screen) {
+    private func show(_ screen: DashboardScreen) {
         // Logged on change only, so Console tells the story of an outage line by line.
         if screen != self.screen { NSLog("Ground Control: screen → %@", "\(screen)") }
         self.screen = screen
